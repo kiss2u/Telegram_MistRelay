@@ -100,6 +100,9 @@ FRONTEND_DIST = Path("/app/web/dist")
 
 routes = web.RouteTableDef()
 
+# 缩略图生成信号量（限制并发数为1，实现"一个一个加载"）
+thumbnail_semaphore = asyncio.Semaphore(1)
+
 def is_flood_wait_error(e: Exception) -> bool:
     """检查异常是否是Telegram限流错误"""
     if pyrogram_errors:
@@ -671,6 +674,9 @@ async def docker_logs_ws_handler(request: web.Request):
                 stop_event = threading.Event()
                 log_queue = asyncio.Queue()
                 
+                # 获取当前事件循环
+                loop = asyncio.get_running_loop()
+
                 def read_logs_thread():
                     """在后台线程中读取Docker日志流"""
                     try:
@@ -686,7 +692,7 @@ async def docker_logs_ws_handler(request: web.Request):
                                     # 将日志行放入队列
                                     asyncio.run_coroutine_threadsafe(
                                         log_queue.put(log_line),
-                                        asyncio.get_event_loop()
+                                        loop
                                     )
                             except Exception as e:
                                 logger.error(f"处理日志行失败: {e}")
@@ -700,7 +706,7 @@ async def docker_logs_ws_handler(request: web.Request):
                                     "type": "error",
                                     "message": f"日志流错误: {str(e)}"
                                 }),
-                                asyncio.get_event_loop()
+                                loop
                             )
                 
                 # 启动后台线程读取日志
@@ -908,7 +914,554 @@ async def reload_config_handler(request: web.Request):
         }, status=500)
 
 
+@routes.get("/api/rclone/config", allow_head=True)
+async def get_rclone_config_handler(request: web.Request):
+    """获取 Rclone 配置文件内容"""
+    try:
+        # Rclone 配置文件路径 (容器内挂载路径)
+        rclone_config_path = Path("/root/.config/rclone/rclone.conf")
+        
+        # 检查文件是否存在
+        if not rclone_config_path.exists():
+            return web.json_response({
+                "success": True,
+                "content": "",
+                "file_path": str(rclone_config_path),
+                "exists": False,
+                "message": "配置文件不存在,请先创建配置"
+            })
+        
+        # 读取配置文件
+        try:
+            with open(rclone_config_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            return web.json_response({
+                "success": True,
+                "content": content,
+                "file_path": str(rclone_config_path),
+                "exists": True
+            })
+        except Exception as e:
+            logger.error(f"读取 Rclone 配置文件失败: {e}", exc_info=True)
+            return web.json_response({
+                "success": False,
+                "error": f"读取配置文件失败: {str(e)}",
+                "file_path": str(rclone_config_path)
+            }, status=500)
+            
+    except Exception as e:
+        logger.error(f"获取 Rclone 配置失败: {e}", exc_info=True)
+        return web.json_response({
+            "success": False,
+            "error": str(e)
+        }, status=500)
+
+
+@routes.post("/api/rclone/config")
+async def save_rclone_config_handler(request: web.Request):
+    """保存 Rclone 配置文件内容"""
+    try:
+        data = await request.json()
+        
+        # 验证请求数据
+        if not isinstance(data, dict) or 'content' not in data:
+            return web.json_response({
+                "success": False,
+                "error": "请求数据格式错误,需要包含 content 字段"
+            }, status=400)
+        
+        content = data.get('content', '')
+        
+        # Rclone 配置文件路径 (容器内挂载路径)
+        rclone_config_path = Path("/root/.config/rclone/rclone.conf")
+        backup_path = Path("/root/.config/rclone/rclone.conf.bak")
+        
+        # 确保目录存在
+        rclone_config_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # 基本验证:检查配置格式(可选,简单检查是否包含配置节)
+        if content.strip():
+            # 检查是否包含至少一个配置节 [remote_name]
+            import re
+            if not re.search(r'\[[\w\-]+\]', content):
+                logger.warning("配置内容格式可能有误:未找到配置节")
+                # 不阻止保存,只是警告
+        
+        # 如果原文件存在,创建备份
+        if rclone_config_path.exists():
+            try:
+                import shutil
+                shutil.copy2(rclone_config_path, backup_path)
+                logger.info(f"已备份原配置文件到: {backup_path}")
+            except Exception as e:
+                logger.warning(f"创建备份文件失败: {e}")
+                # 备份失败不阻止保存
+        
+        # 保存新配置
+        try:
+            with open(rclone_config_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            
+            logger.info(f"Rclone 配置已更新: {rclone_config_path}")
+            
+            return web.json_response({
+                "success": True,
+                "message": "配置已保存,修改将在下次上传时生效",
+                "file_path": str(rclone_config_path),
+                "backup_path": str(backup_path) if backup_path.exists() else None
+            })
+        except Exception as e:
+            logger.error(f"写入 Rclone 配置文件失败: {e}", exc_info=True)
+            return web.json_response({
+                "success": False,
+                "error": f"保存配置文件失败: {str(e)}"
+            }, status=500)
+            
+    except Exception as e:
+        logger.error(f"保存 Rclone 配置失败: {e}", exc_info=True)
+        return web.json_response({
+            "success": False,
+            "error": str(e)
+        }, status=500)
+
+
+@routes.get("/api/rclone/remotes", allow_head=True)
+async def get_rclone_remotes_handler(request: web.Request):
+    """获取 rclone.conf 中所有已配置的 remote"""
+    try:
+        # Rclone 配置文件路径
+        rclone_config_path = Path("/root/.config/rclone/rclone.conf")
+        
+        # 检查文件是否存在
+        if not rclone_config_path.exists():
+            return web.json_response({
+                "success": True,
+                "remotes": []
+            })
+        
+        # 读取并解析配置文件
+        try:
+            with open(rclone_config_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # 解析 remote 配置
+            remotes = []
+            import re
+            
+            # 匹配所有 [remote_name] 格式的行
+            remote_pattern = re.compile(r'^\[([^\]]+)\]', re.MULTILINE)
+            remote_names = remote_pattern.findall(content)
+            
+            # 为每个 remote 提取类型信息
+            for remote_name in remote_names:
+                # 查找该 remote 下的 type 配置
+                type_pattern = re.compile(
+                    rf'\[{re.escape(remote_name)}\].*?^type\s*=\s*(.+?)$',
+                    re.MULTILINE | re.DOTALL
+                )
+                type_match = type_pattern.search(content)
+                remote_type = type_match.group(1).strip() if type_match else "unknown"
+                
+                remotes.append({
+                    "name": remote_name,
+                    "type": remote_type
+                })
+            
+            logger.info(f"解析到 {len(remotes)} 个 rclone remote")
+            
+            return web.json_response({
+                "success": True,
+                "remotes": remotes
+            })
+            
+        except Exception as e:
+            logger.error(f"解析 Rclone 配置文件失败: {e}", exc_info=True)
+            return web.json_response({
+                "success": False,
+                "error": f"解析配置文件失败: {str(e)}"
+            }, status=500)
+            
+    except Exception as e:
+        logger.error(f"获取 Rclone remotes 失败: {e}", exc_info=True)
+        return web.json_response({
+            "success": False,
+            "error": str(e)
+        }, status=500)
+
+
+@routes.get("/api/rclone/browse", allow_head=True)
+async def browse_drive_handler(request: web.Request):
+    """浏览云盘文件和目录"""
+    try:
+        remote = request.query.get('remote', 'onedrive')
+        path = request.query.get('path', '/')
+        
+        # 验证参数
+        if not remote:
+            return web.json_response({
+                "success": False,
+                "error": "remote 参数不能为空"
+            }, status=400)
+        
+        # 构建 rclone 路径
+        rclone_path = f"{remote}:{path}"
+        
+        # 调用 rclone lsjson 命令
+        try:
+            import subprocess
+            import json
+            
+            cmd = ['rclone', 'lsjson', rclone_path, '--no-modtime=false']
+            
+            logger.info(f"执行 rclone 命令: {' '.join(cmd)}")
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            if result.returncode != 0:
+                error_msg = result.stderr.strip() if result.stderr else "未知错误"
+                logger.error(f"rclone 命令失败: {error_msg}")
+                return web.json_response({
+                    "success": False,
+                    "error": f"获取文件列表失败: {error_msg}"
+                }, status=500)
+            
+            # 解析 JSON 输出
+            items_raw = json.loads(result.stdout)
+            
+            # 转换为统一格式
+            # 转换为统一格式
+            items = []
+            
+            # 处理父目录路径: 确保不以/开头(rclone路径习惯), 且不为/
+            parent_path = path.strip('/')
+            
+            for item in items_raw:
+                name = item.get("Name", "")
+                rel_path = item.get("Path", "") # rclone lsjson返回的是相对路径
+                
+                # 构建完整路径
+                if parent_path:
+                    full_path = f"{parent_path}/{rel_path}"
+                else:
+                    full_path = rel_path
+                    
+                items.append({
+                    "name": name,
+                    "path": full_path, # 返回完整路径
+                    "size": item.get("Size", 0),
+                    "mimeType": item.get("MimeType", ""),
+                    "modTime": item.get("ModTime", ""),
+                    "isDir": item.get("IsDir", False),
+                    "id": item.get("ID", "")  # 添加文件ID
+                })
+            
+            logger.info(f"成功获取 {len(items)} 个文件/目录")
+            
+            return web.json_response({
+                "success": True,
+                "remote": remote,
+                "path": path,
+                "items": items
+            })
+            
+        except subprocess.TimeoutExpired:
+            logger.error("rclone 命令超时")
+            return web.json_response({
+                "success": False,
+                "error": "获取文件列表超时,请重试"
+            }, status=504)
+        except json.JSONDecodeError as e:
+            logger.error(f"解析 rclone 输出失败: {e}")
+            return web.json_response({
+                "success": False,
+                "error": "解析文件列表失败"
+            }, status=500)
+        except Exception as e:
+            logger.error(f"执行 rclone 命令失败: {e}", exc_info=True)
+            return web.json_response({
+                "success": False,
+                "error": f"执行命令失败: {str(e)}"
+            }, status=500)
+            
+    except Exception as e:
+        logger.error(f"浏览云盘失败: {e}", exc_info=True)
+        return web.json_response({
+            "success": False,
+            "error": str(e)
+        }, status=500)
+
+
+@routes.get("/api/rclone/thumbnail", allow_head=True)
+async def get_thumbnail_handler(request: web.Request):
+    """获取文件缩略图(使用 VFS 本地生成)"""
+    try:
+        remote = request.query.get('remote')
+        path = request.query.get('path')
+        # 获取当前目录(用于拼接完整路径)
+        current_dir = request.query.get('dir', '/')
+        
+        if not remote or not path:
+            return web.json_response({
+                "success": False,
+                "error": "remote 和 path 参数不能为空"
+            }, status=400)
+
+        # 兼容旧逻辑:构建完整路径
+        # 如果 path 是相对路径且提供了 current_dir,则尝试拼接
+        if current_dir and current_dir != '/':
+            clean_dir = current_dir.strip('/')
+            # 如果 path 不包含目录前缀,则拼接
+            if not path.startswith(clean_dir + '/'):
+                path = f"{clean_dir}/{path}"
+        
+        # 确保路径开头没有 /
+        path = path.lstrip('/')
+        
+        try:
+            # 导入 VFS 管理器和缩略图生成器
+            import sys
+            sys.path.insert(0, '/app')
+            from rclone_vfs_manager import get_vfs_manager
+            from thumbnail_generator import get_thumbnail_generator
+            
+            vfs_manager = get_vfs_manager()
+            thumb_generator = get_thumbnail_generator()
+            
+            # 确保 remote 已挂载
+            if not vfs_manager.ensure_mounted(remote):
+                return web.json_response({
+                    "success": False,
+                    "error": f"无法挂载 remote: {remote}"
+                }, status=500)
+            
+            # 获取文件在挂载点的本地路径
+            local_file_path = vfs_manager.get_file_path(remote, path)
+            if not local_file_path:
+                return web.json_response({
+                    "success": False,
+                    "error": "无法获取文件路径"
+                }, status=500)
+            
+            # 生成缩略图 (使用信号量限制并发，并放入线程池避免阻塞主循环)
+            async with thumbnail_semaphore:
+                thumbnail_path = await asyncio.get_running_loop().run_in_executor(
+                    None,
+                    thumb_generator.generate_thumbnail,
+                    remote,
+                    path,
+                    local_file_path
+                )
+            
+            if not thumbnail_path:
+                return web.json_response({
+                    "success": False,
+                    "error": "生成缩略图失败"
+                }, status=500)
+            
+            # 生成缓存key(用于前端请求)
+            import hashlib
+            cache_key = hashlib.md5(f"{remote}:{path}".encode()).hexdigest()
+            
+            # 返回缩略图URL
+            thumbnail_url = f"/api/rclone/thumbnail/serve/{remote}/{cache_key}.webp"
+            
+            return web.json_response({
+                "success": True,
+                "thumbnail_url": thumbnail_url
+            })
+            
+        except ImportError as e:
+            logger.error(f"导入模块失败: {e}", exc_info=True)
+            return web.json_response({
+                "success": False,
+                "error": f"系统模块加载失败: {str(e)}"
+            }, status=500)
+        except Exception as e:
+            logger.error(f"生成缩略图失败: {e}", exc_info=True)
+            return web.json_response({
+                "success": False,
+                "error": str(e)
+            }, status=500)
+            
+    except Exception as e:
+        logger.error(f"缩略图处理失败: {e}", exc_info=True)
+        return web.json_response({
+            "success": False,
+            "error": str(e)
+        }, status=500)
+
+
+@routes.get("/api/rclone/thumbnail/serve/{remote}/{filename}", allow_head=True)
+async def serve_thumbnail_handler(request: web.Request):
+    """提供缩略图文件服务"""
+    try:
+        remote = request.match_info['remote']
+        filename = request.match_info['filename']
+        
+        # 导入缩略图生成器
+        import sys
+        sys.path.insert(0, '/app')
+        from thumbnail_generator import get_thumbnail_generator
+        
+        thumb_generator = get_thumbnail_generator()
+        
+        # 构建缩略图文件路径
+        thumbnail_path = thumb_generator.cache_dir / remote / filename
+        
+        if not thumbnail_path.exists():
+            return web.Response(
+                text="缩略图不存在",
+                status=404
+            )
+        
+        # 返回文件
+        return web.FileResponse(
+            thumbnail_path,
+            headers={
+                'Cache-Control': 'public, max-age=86400',  # 缓存24小时
+                'Content-Type': 'image/webp'
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"提供缩略图失败: {e}", exc_info=True)
+        return web.Response(text=str(e), status=500)
+
+
+@routes.get("/api/rclone/file", allow_head=True)
+async def get_rclone_file_handler(request: web.Request):
+    """获取云盘文件内容(支持流式传输和Range请求)"""
+    try:
+        remote = request.query.get('remote')
+        path = request.query.get('path')
+        is_download = request.query.get('download', 'false').lower() == 'true'
+        
+        if not remote or not path:
+            return web.json_response({
+                "success": False,
+                "error": "remote 和 path 参数不能为空"
+            }, status=400)
+            
+        # 获取 VFS 管理器
+        from rclone_vfs_manager import get_vfs_manager
+        vfs_manager = get_vfs_manager()
+        
+        # 确保 remote 已挂载
+        if not vfs_manager.ensure_mounted(remote):
+            return web.json_response({
+                "success": False,
+                "error": f"无法挂载 remote: {remote}"
+            }, status=500)
+        
+        # 获取文件在挂载点的本地路径
+        local_file_path = vfs_manager.get_file_path(remote, path)
+        if not local_file_path or not local_file_path.exists():
+            return web.json_response({
+                "success": False,
+                "error": "文件不存在或无法访问"
+            }, status=404)
+            
+        # 准备响应头
+        headers = {}
+        if is_download:
+            filename = path.split('/')[-1]
+            # 编码文件名以支持非 ASCII 字符
+            from urllib.parse import quote
+            encoded_filename = quote(filename)
+            headers['Content-Disposition'] = f'attachment; filename="{encoded_filename}"; filename*=UTF-8\'\'{encoded_filename}'
+            
+        # 使用 aiohttp 的 FileResponse 直接服务本地文件
+        return web.FileResponse(local_file_path, headers=headers)
+            
+    except Exception as e:
+        logger.error(f"获取文件失败: {e}", exc_info=True)
+        return web.Response(text=str(e), status=500)
+
+
+@routes.delete("/api/rclone/file")
+async def delete_rclone_file_handler(request: web.Request):
+    """删除云盘文件或目录"""
+    try:
+        remote = request.query.get('remote')
+        path = request.query.get('path')
+        is_dir = request.query.get('is_dir', 'false').lower() == 'true'
+        
+        if not remote or not path:
+            return web.json_response({
+                "success": False,
+                "error": "remote 和 path 参数不能为空"
+            }, status=400)
+            
+        # 构建 rclone 路径
+        rclone_path = f"{remote}:{path}"
+        
+        try:
+            import subprocess
+            
+            # 根据类型选择命令
+            if is_dir:
+                # 删除目录及其内容
+                cmd = ['rclone', 'purge', rclone_path]
+            else:
+                # 删除单个文件
+                cmd = ['rclone', 'deletefile', rclone_path]
+            
+            logger.info(f"执行删除操作: {' '.join(cmd)}")
+            
+            # 在线程池中执行耗时操作
+            result = await asyncio.to_thread(
+                subprocess.run,
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=60
+            )
+            
+            if result.returncode != 0:
+                error_msg = result.stderr.strip() if result.stderr else "未知错误"
+                # 如果是 deletefile 但文件不存在，rclone 可能会报错，这里视情况处理
+                # 但 purge 也会报错如果目录不存在
+                logger.error(f"删除失败: {error_msg}")
+                return web.json_response({
+                    "success": False,
+                    "error": f"删除失败: {error_msg}"
+                }, status=500)
+            
+            logger.info(f"成功删除: {rclone_path}")
+            return web.json_response({
+                "success": True,
+                "message": "删除成功"
+            })
+            
+        except subprocess.TimeoutExpired:
+            logger.error("删除超时")
+            return web.json_response({
+                "success": False,
+                "error": "删除操作超时"
+            }, status=504)
+        except Exception as e:
+            logger.error(f"删除失败: {e}", exc_info=True)
+            return web.json_response({
+                "success": False,
+                "error": f"删除失败: {str(e)}"
+            }, status=500)
+            
+    except Exception as e:
+        logger.error(f"处理删除请求失败: {e}", exc_info=True)
+        return web.json_response({
+            "success": False,
+            "error": str(e)
+        }, status=500)
+
+
 @routes.get("/api/downloads", allow_head=True)
+
 async def downloads_api_handler(request: web.Request):
     """
     API接口：返回下载记录JSON数据

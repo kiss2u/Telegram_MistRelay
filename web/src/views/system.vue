@@ -202,6 +202,86 @@ function fetchDockerStatus() {
     })
 }
 
+function stopLogStream() {
+  if (ws.value) {
+    ws.value.close()
+    ws.value = null
+  }
+  wsConnected.value = false
+  connecting.value = false
+}
+
+function startLogStream() {
+  if (ws.value) {
+    stopLogStream()
+  }
+
+  connecting.value = true
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  const host = window.location.host
+  const url = `${protocol}//${host}/api/system/docker/logs/ws?tail=${logLines.value}`
+
+  try {
+    ws.value = new WebSocket(url)
+
+    ws.value.onopen = () => {
+      wsConnected.value = true
+      connecting.value = false
+      // 清空现有日志，准备接收流式日志
+      dockerLogs.value = ''
+    }
+
+    ws.value.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data)
+        
+        if (data.type === 'history') {
+          dockerLogs.value = data.logs || ''
+        } else if (data.type === 'log' || data.type === 'line') { // line passed from backend is 'line', but let's handle 'log' too just in case
+          // Append new log line
+          dockerLogs.value += (dockerLogs.value ? '\n' : '') + (data.line || '')
+          // Auto scroll to bottom
+          nextTick(() => {
+            if (logsContainerRef.value) {
+              logsContainerRef.value.scrollTop = logsContainerRef.value.scrollHeight
+            }
+          })
+        } else if (data.type === 'error') {
+          ElMessage.error(data.message || '日志流错误')
+        }
+      } catch (e) {
+        console.error('解析WebSocket消息失败:', e)
+      }
+    }
+
+    ws.value.onerror = (error) => {
+      console.error('WebSocket错误:', error)
+      ElMessage.error('日志流连接错误')
+      connecting.value = false
+      wsConnected.value = false
+    }
+
+    ws.value.onclose = () => {
+      wsConnected.value = false
+      connecting.value = false
+    }
+  } catch (e) {
+    console.error('建立WebSocket连接失败:', e)
+    ElMessage.error('无法建立日志流连接')
+    connecting.value = false
+  }
+}
+
+function handleLogLinesChange() {
+  if (wsConnected.value) {
+    // 如果正在流式传输，重新连接以应用新的行数设置
+    startLogStream()
+  } else {
+    // 否则只是获取静态日志
+    fetchLogs()
+  }
+}
+
 function fetchLogs() {
   loadingLogs.value = true
   getDockerLogs(logLines.value)

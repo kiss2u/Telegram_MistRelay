@@ -14,10 +14,11 @@ services:
       - 8.8.4.4
       - 114.114.114.114
     volumes:
-      - ./db:/app/db  # 数据库和配置文件目录（持久化）
-      - ./downloads:/root/downloads  # 下载目录（可根据需要修改）
+      - ./db:/app/db  # 数据库和配置文件目录(持久化)
+      - ./downloads:/root/downloads  # 下载目录(可根据需要修改)
       - ./rclone:/root/.config/rclone  # rclone配置目录
-      - /var/run/docker.sock:/var/run/docker.sock  # Docker socket（用于系统管理模块控制容器，需要root权限）
+      - ./cache/thumbnails:/app/cache/thumbnails  # 缩略图缓存目录
+      - /var/run/docker.sock:/var/run/docker.sock  # Docker socket(用于系统管理模块控制容器,需要root权限)
     environment:
       - TZ=Asia/Shanghai
     # 如果需要直链功能，需要映射Web服务器端口（默认8080）

@@ -35,7 +35,7 @@ RUN python -m pip install --upgrade pip && \
 FROM python:3.11-slim-bookworm
 
 # 安装必要的工具和依赖（合并所有apt-get命令以减少层数）
-# 注意：使用 Docker Python SDK 代替 Docker CLI，更可靠且不需要安装二进制文件
+# 注意:使用 Docker Python SDK 代替 Docker CLI,更可靠且不需要安装二进制文件
 RUN apt-get update && apt-get install -y \
     wget \
     curl \
@@ -45,6 +45,8 @@ RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
     aria2 \
+    ffmpeg \
+    fuse3 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -124,11 +126,15 @@ WORKDIR /app
 # Copy the rest of the application files
 # 前端已通过多阶段构建集成到镜像中
 COPY app.py async_aria2_client.py configer.py db.py util.py monitor.py requirements.txt start.sh ./
+COPY rclone_vfs_manager.py thumbnail_generator.py ./
 COPY aria2_client/ ./aria2_client/
 COPY WebStreamer/ ./WebStreamer/
 
 # 确保PATH包含.local/bin
 ENV PATH=/root/.local/bin:$PATH
+
+# 创建 rclone 挂载点和缓存目录
+RUN mkdir -p /mnt/rclone /app/cache/thumbnails
 
 # 设置启动脚本权限
 RUN chmod +x /app/start.sh

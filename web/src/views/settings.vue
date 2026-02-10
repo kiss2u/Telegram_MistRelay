@@ -84,8 +84,24 @@
               <el-switch v-model="configs.rclone.UP_ONEDRIVE" />
             </el-form-item>
             <el-form-item label="Rclone远程名称" v-if="configs.rclone.UP_ONEDRIVE">
-              <el-input v-model="configs.rclone.RCLONE_REMOTE" />
-              <div class="el-form-item__help">OneDrive的rclone远程名称（默认：onedrive）</div>
+              <el-select 
+                v-model="configs.rclone.RCLONE_REMOTE" 
+                placeholder="选择 OneDrive Remote"
+                filterable
+                allow-create
+                default-first-option
+              >
+                <el-option
+                  v-for="remote in availableRemotes.filter(r => r.type === 'onedrive')"
+                  :key="remote.name"
+                  :label="`${remote.name} (${remote.type})`"
+                  :value="remote.name"
+                >
+                  <span style="float: left">{{ remote.name }}</span>
+                  <span style="float: right; color: #8492a6; font-size: 12px">{{ remote.type }}</span>
+                </el-option>
+              </el-select>
+              <div class="el-form-item__help">OneDrive的rclone远程名称(自动过滤 type=onedrive 的 remote)</div>
             </el-form-item>
             <el-form-item label="OneDrive路径" v-if="configs.rclone.UP_ONEDRIVE">
               <el-input v-model="configs.rclone.RCLONE_PATH" />
@@ -110,8 +126,24 @@
               </template>
             </el-alert>
             <el-form-item label="Google Drive远程名称" v-if="configs.rclone.UP_GOOGLE_DRIVE">
-              <el-input v-model="configs.rclone.GOOGLE_DRIVE_REMOTE" />
-              <div class="el-form-item__help">Google Drive的rclone远程名称（默认：gdrive），需与rclone.conf中的配置名称一致</div>
+              <el-select 
+                v-model="configs.rclone.GOOGLE_DRIVE_REMOTE" 
+                placeholder="选择 Google Drive Remote"
+                filterable
+                allow-create
+                default-first-option
+              >
+                <el-option
+                  v-for="remote in availableRemotes.filter(r => r.type === 'drive')"
+                  :key="remote.name"
+                  :label="`${remote.name} (${remote.type})`"
+                  :value="remote.name"
+                >
+                  <span style="float: left">{{ remote.name }}</span>
+                  <span style="float: right; color: #8492a6; font-size: 12px">{{ remote.type }}</span>
+                </el-option>
+              </el-select>
+              <div class="el-form-item__help">Google Drive的rclone远程名称(自动过滤 type=drive 的 remote)</div>
             </el-form-item>
             <el-form-item label="Google Drive路径" v-if="configs.rclone.UP_GOOGLE_DRIVE">
               <el-input v-model="configs.rclone.GOOGLE_DRIVE_PATH" />
@@ -122,6 +154,50 @@
             <el-form-item label="上传后删除本地文件">
               <el-switch v-model="configs.rclone.AUTO_DELETE_AFTER_UPLOAD" />
               <div class="el-form-item__help">上传成功后自动删除本地文件以节省磁盘空间</div>
+            </el-form-item>
+            
+            <el-divider content-position="left">Rclone 配置文件管理</el-divider>
+            <el-alert
+              type="info"
+              :closable="false"
+              style="margin-bottom: 20px"
+            >
+              <template #title>
+                <div style="font-size: 13px">
+                  <strong>提示:</strong>直接编辑 rclone.conf 文件内容,保存时会自动备份原文件。配置采用 INI 格式,每个远程存储以 <code>[remote_name]</code> 开始。
+                </div>
+              </template>
+            </el-alert>
+            <el-form-item label="配置文件路径">
+              <el-input v-model="rcloneConfigPath" readonly />
+            </el-form-item>
+            <el-form-item label="配置文件内容">
+              <el-input
+                v-model="rcloneConfigContent"
+                type="textarea"
+                :rows="15"
+                placeholder="rclone.conf 配置文件内容将在此显示..."
+                style="font-family: 'Courier New', monospace; font-size: 12px;"
+              />
+              <div class="el-form-item__help">
+                支持添加多个远程存储配置,修改后立即生效无需重启服务
+              </div>
+            </el-form-item>
+            <el-form-item>
+              <el-button 
+                type="primary" 
+                @click="saveRcloneConfigFile" 
+                :loading="savingRcloneConfig"
+                :disabled="!rcloneConfigContent"
+              >
+                保存配置文件
+              </el-button>
+              <el-button @click="loadRcloneConfigFile" :loading="loadingRcloneConfig">
+                重新加载
+              </el-button>
+              <span v-if="rcloneConfigLastSaved" style="margin-left: 10px; color: #909399; font-size: 12px;">
+                {{ rcloneConfigLastSaved }}
+              </span>
             </el-form-item>
           </el-form>
         </el-card>
@@ -294,11 +370,21 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getConfig, updateConfig, reloadConfig } from '@/api'
+import { getConfig, updateConfig, reloadConfig, getRcloneConfig, saveRcloneConfig, getRcloneRemotes, type RcloneRemote } from '@/api'
 
 const activeTab = ref('telegram')
 const saving = ref(false)
 const reloading = ref(false)
+
+// Rclone 配置文件管理相关状态
+const rcloneConfigContent = ref('')
+const rcloneConfigPath = ref('/root/.config/rclone/rclone.conf')
+const loadingRcloneConfig = ref(false)
+const savingRcloneConfig = ref(false)
+const rcloneConfigLastSaved = ref('')
+
+// Rclone remotes 列表
+const availableRemotes = ref<RcloneRemote[]>([])
 
 // 配置数据
 const configs = ref({
@@ -477,8 +563,97 @@ function clearCache() {
   // TODO: 实现清理缓存逻辑
 }
 
+// Rclone 配置文件管理函数
+async function loadRcloneConfigFile() {
+  loadingRcloneConfig.value = true
+  try {
+    const response = await getRcloneConfig()
+    if (response.success) {
+      rcloneConfigContent.value = response.content || ''
+      rcloneConfigPath.value = response.file_path || '/root/.config/rclone/rclone.conf'
+      if (!response.exists) {
+        ElMessage.info(response.message || '配置文件不存在')
+      } else {
+        ElMessage.success('配置文件加载成功')
+      }
+      rcloneConfigLastSaved.value = ''
+    } else {
+      ElMessage.error(response.error || '加载配置文件失败')
+    }
+  } catch (err: any) {
+    console.error('加载 Rclone 配置失败:', err)
+    ElMessage.error(err.message || '加载配置文件失败')
+  } finally {
+    loadingRcloneConfig.value = false
+  }
+}
+
+async function saveRcloneConfigFile() {
+  if (!rcloneConfigContent.value.trim()) {
+    ElMessage.warning('配置内容不能为空')
+    return
+  }
+  
+  try {
+    await ElMessageBox.confirm(
+      '确定要保存 Rclone 配置文件吗?原文件将被备份为 rclone.conf.bak',
+      '确认保存',
+      {
+        confirmButtonText: '确定',
+        cancelButtonText: '取消',
+        type: 'warning'
+      }
+    )
+    
+    savingRcloneConfig.value = true
+    
+    try {
+      const response = await saveRcloneConfig(rcloneConfigContent.value)
+      if (response.success) {
+        ElMessage.success(response.message || '配置文件保存成功')
+        const now = new Date()
+        rcloneConfigLastSaved.value = `最后保存: ${now.toLocaleString()}`
+        // 重新加载配置以确保同步
+        await loadRcloneConfigFile()
+        // 刷新 remotes 列表
+        await loadRcloneRemotes()
+      } else {
+        ElMessage.error(response.error || '保存配置文件失败')
+      }
+    } catch (err: any) {
+      console.error('保存 Rclone 配置失败:', err)
+      ElMessage.error(err.message || '保存配置文件失败')
+    } finally {
+      savingRcloneConfig.value = false
+    }
+  } catch (err: any) {
+    if (err !== 'cancel') {
+      console.error('保存配置失败:', err)
+    }
+  }
+}
+
+// 加载 Rclone Remotes 列表
+async function loadRcloneRemotes() {
+  try {
+    const response = await getRcloneRemotes()
+    if (response.success && response.remotes) {
+      availableRemotes.value = response.remotes
+    } else {
+      availableRemotes.value = []
+    }
+  } catch (err: any) {
+    console.error('加载 Rclone remotes 失败:', err)
+    availableRemotes.value = []
+  }
+}
+
 onMounted(() => {
   fetchConfigs()
+  // 自动加载 Rclone 配置文件
+  loadRcloneConfigFile()
+  // 自动加载 Rclone remotes 列表
+  loadRcloneRemotes()
 })
 </script>
 

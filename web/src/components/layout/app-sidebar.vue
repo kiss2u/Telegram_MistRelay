@@ -36,6 +36,11 @@
         <template #title>任务队列</template>
       </el-menu-item>
       
+      <el-menu-item index="/drive" class="menu-item">
+        <el-icon><Folder /></el-icon>
+        <template #title>我的网盘</template>
+      </el-menu-item>
+      
       <el-menu-item index="/settings" class="menu-item">
         <el-icon><Setting /></el-icon>
         <template #title>系统设置</template>
@@ -67,6 +72,7 @@ import {
   Odometer,
   Download,
   List,
+  Folder,
   Setting,
   Tools,
   Expand,

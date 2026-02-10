@@ -14,3 +14,5 @@ python-dotenv<=0.20.0
 # Docker Python SDK（用于系统管理模块）
 docker>=6.0.0
 psutil>=5.9.0
+# 缩略图生成依赖
+Pillow>=10.0.0

@@ -27,6 +27,11 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/settings.vue')
   },
   {
+    path: '/drive',
+    name: 'Drive',
+    component: () => import('@/views/drive.vue')
+  },
+  {
     path: '/system',
     name: 'System',
     component: () => import('@/views/system.vue')

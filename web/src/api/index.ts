@@ -7,12 +7,13 @@ import type {
   DockerLogsResponse,
   ConfigResponse,
   ConfigUpdateResponse,
-  SystemResourcesResponse
+  SystemResourcesResponse,
+  UploadRecord
 } from '@/types/api'
 
 const api = axios.create({
   baseURL: '/api',
-  timeout: 10000,
+  timeout: 60000,
   headers: {
     'Content-Type': 'application/json'
   }
@@ -202,4 +203,91 @@ export function retryUpload(uploadId: number): Promise<TaskControlResponse> {
 
 export function deleteUpload(uploadId: number): Promise<TaskControlResponse> {
   return api.delete<TaskControlResponse>(`/uploads/${uploadId}`).then(response => response.data)
+}
+
+// ==================== Rclone 配置管理 API ====================
+
+export interface RcloneConfigResponse {
+  success: boolean
+  content?: string
+  file_path?: string
+  exists?: boolean
+  message?: string
+  backup_path?: string
+  error?: string
+}
+
+export function getRcloneConfig(): Promise<RcloneConfigResponse> {
+  return api.get<RcloneConfigResponse>('/rclone/config').then(response => response.data)
+}
+
+export function saveRcloneConfig(content: string): Promise<RcloneConfigResponse> {
+  return api.post<RcloneConfigResponse>('/rclone/config', { content }).then(response => response.data)
+}
+
+export interface RcloneRemote {
+  name: string
+  type: string
+}
+
+export interface RcloneRemotesResponse {
+  success: boolean
+  remotes?: RcloneRemote[]
+  error?: string
+}
+
+export function getRcloneRemotes(): Promise<RcloneRemotesResponse> {
+  return api.get<RcloneRemotesResponse>('/rclone/remotes').then(response => response.data)
+}
+
+export interface DriveItem {
+  name: string
+  path: string
+  size?: number
+  mimeType?: string
+  modTime?: string
+  isDir: boolean
+  id?: string  // 云盘文件ID(如OneDrive的文件ID)
+}
+
+export interface DriveBrowseResponse {
+  success: boolean
+  remote?: string
+  path?: string
+  items?: DriveItem[]
+  error?: string
+}
+
+export function browseDrive(remote: string, path: string = '/'): Promise<DriveBrowseResponse> {
+  return api.get<DriveBrowseResponse>('/rclone/browse', {
+    params: { remote, path }
+  }).then(response => response.data)
+}
+
+export interface ThumbnailResponse {
+  success: boolean
+  thumbnail_url?: string
+  error?: string
+}
+
+export function getThumbnail(remote: string, path: string, type: string, dir?: string, id?: string): Promise<ThumbnailResponse> {
+  return api.get<ThumbnailResponse>('/rclone/thumbnail', {
+    params: { remote, path, type, dir, id }
+  }).then(response => response.data)
+}
+
+export interface DeleteFileResponse {
+  success: boolean
+  message?: string
+  error?: string
+}
+
+export function deleteFile(remote: string, path: string, isDir: boolean = false): Promise<DeleteFileResponse> {
+  return api.delete<DeleteFileResponse>('/rclone/file', {
+    params: {
+      remote,
+      path,
+      is_dir: isDir
+    }
+  }).then(response => response.data)
 }
