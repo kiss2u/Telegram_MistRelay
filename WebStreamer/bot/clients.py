@@ -92,11 +92,11 @@ async def initialize_clients():
                     api_id=Var.API_ID,
                     api_hash=Var.API_HASH,
                     workdir=sessions_dir if Var.USE_SESSION_FILE else "WebStreamer",
-                    plugins={"root": "WebStreamer.bot.plugins"},
                     bot_token=bot_token,
                     sleep_threshold=Var.SLEEP_THRESHOLD,
                     workers=Var.WORKERS,
                     in_memory=not Var.USE_SESSION_FILE,
+                    no_updates=True,
                 )
                 
                 # 启动客户端

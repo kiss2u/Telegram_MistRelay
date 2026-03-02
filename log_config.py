@@ -89,7 +89,7 @@ def read_log_lines(filename=None, tail=200, level_filter=None, keyword=None):
         with open(path, 'r', encoding='utf-8', errors='replace') as f:
             for line in f:
                 line = line.rstrip('\n')
-                if level_filter and f'| {level_filter}' not in line.upper():
+                if level_filter and f'| {level_filter.upper()}' not in line.upper():
                     continue
                 if keyword and keyword.lower() not in line.lower():
                     continue

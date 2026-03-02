@@ -33,6 +33,7 @@ const props = defineProps({
 });
 
 import { ElNotification } from 'element-plus'
+import { buildWsUrl } from '@/utils/websocket'
 
 const videoPlayer = ref<HTMLVideoElement | null>(null);
 let player: any = null; // Use any to avoid complex typing issues for now, or use ReturnType<typeof videojs>
@@ -57,9 +58,10 @@ onMounted(() => {
     
     // Connect to cache monitor
     if (props.remote && props.path) {
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const host = window.location.host;
-      const wsUrl = `${protocol}//${host}/api/rclone/cache/monitor?remote=${encodeURIComponent(props.remote)}&path=${encodeURIComponent(props.path)}`;
+      const wsUrl = buildWsUrl('/api/rclone/cache/monitor', {
+        remote: props.remote,
+        path: props.path,
+      });
       
       try {
         ws = new WebSocket(wsUrl);

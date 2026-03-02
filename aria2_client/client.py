@@ -37,12 +37,15 @@ class AsyncAria2Client:
         self.reconnect = True
         self.bot = bot
         self.progress_cache = {}
-        self.download_messages = {}  # 存储每个下载任务的消息对象
-        self.completed_gids = set()  # 记录已完成的GID，防止重复处理
+        self.download_messages = {}
+        self.completed_gids = set()
+        
+        # 复用的 HTTP session（整个生命周期内只创建一次）
+        self._http_session: Optional[aiohttp.ClientSession] = None
         
         # 轮询相关
-        self.polling_task = None  # 轮询任务
-        self.is_polling = False   # 轮询状态标志
+        self.polling_task = None
+        self.is_polling = False
         
         # 初始化处理器
         self.upload_handler = UploadHandler(bot, self.progress_cache)
@@ -54,36 +57,44 @@ class AsyncAria2Client:
             self  # 传递客户端实例，用于移除任务
         )
 
+    def _resolve_ws_url(self) -> str:
+        """解析 WebSocket URL，Docker 环境下自动替换为 localhost"""
+        url_parts = self.ws_url.split('/')
+        ws_protocol = url_parts[0].split(':')[0]
+        host_port = url_parts[2]
+        path = '/'.join(url_parts[3:])
+        
+        if ':' in host_port:
+            host, port = host_port.split(':')
+            if not (host == 'localhost' or host == '127.0.0.1' or all(c.isdigit() or c == '.' for c in host)):
+                host = 'localhost'
+            host_port = f"{host}:{port}"
+        
+        return f"{ws_protocol}://{host_port}/{path}"
+
     async def connect(self):
-        """连接到Aria2 WebSocket服务器"""
-        try:
-            # 从RPC_URL中提取主机和端口
-            url_parts = self.ws_url.split('/')
-            ws_protocol = url_parts[0].split(':')[0]  # 获取ws或wss
-            host_port = url_parts[2]  # 跳过ws://
-            path = '/'.join(url_parts[3:])
-            
-            # 如果主机名不是localhost或IP地址，则在Docker环境中使用localhost
-            if ':' in host_port:
-                host, port = host_port.split(':')
-                if not (host == 'localhost' or host == '127.0.0.1' or all(c.isdigit() or c == '.' for c in host)):
-                    # 在Docker环境中，使用localhost
-                    host = 'localhost'
-                host_port = f"{host}:{port}"
-            
-            # 重新构建完整URL
-            full_ws_url = f"{ws_protocol}://{host_port}/{path}"
-            
-            logger.info(f"连接到aria2 WebSocket: {full_ws_url}")
-            self.websocket = await websockets.connect(full_ws_url, ping_interval=30)
-            logger.info("WebSocket连接成功")
-            asyncio.ensure_future(self.listen())
-            
-            # 启动轮询任务
-            await self.start_polling()
-        except Exception as e:
-            logger.error(f"WebSocket连接失败: {e}", exc_info=True)
-            await self.re_connect()
+        """连接到 Aria2 WebSocket 服务器（带指数退避重连）"""
+        full_ws_url = self._resolve_ws_url()
+        retry = 0
+        max_delay = 300
+
+        while self.reconnect:
+            try:
+                delay = min(5 * (2 ** retry), max_delay) if retry > 0 else 0
+                if delay:
+                    logger.info(f"等待 {delay} 秒后重连（第 {retry} 次）...")
+                    await asyncio.sleep(delay)
+
+                logger.info(f"连接到aria2 WebSocket: {full_ws_url}")
+                self.websocket = await websockets.connect(full_ws_url, ping_interval=30)
+                logger.info("WebSocket连接成功")
+                retry = 0
+                asyncio.ensure_future(self.listen())
+                await self.start_polling()
+                return
+            except Exception as e:
+                retry += 1
+                logger.error(f"WebSocket连接失败（第 {retry} 次）: {e}")
 
     async def listen(self):
         """监听WebSocket消息"""
@@ -92,10 +103,11 @@ class AsyncAria2Client:
                 result = json.loads(message)
                 if 'id' in result and result['id'] is None:
                     continue
-                logger.info(f'rec message:{message}')
+                logger.debug(f'rec message:{message}')
                 if 'error' in result:
                     err_msg = result['error']['message']
                     err_code = result['error']['code']
+                    logger.error(f"RPC 错误 [{err_code}]: {err_msg}")
                 elif 'method' in result:
                     method_name = result['method']
                     if method_name == 'aria2.onDownloadStart':
@@ -108,17 +120,18 @@ class AsyncAria2Client:
                         await self.download_handler.on_download_pause(result, self.tell_status)
         except websockets.exceptions.ConnectionClosedError:
             logger.info("WebSocket连接已关闭")
-            # 停止轮询
             await self.stop_polling()
-            await self.re_connect()
+            asyncio.ensure_future(self.connect())
 
     def parse_json_to_str(self, method, params):
         """将RPC方法和参数转换为JSON字符串"""
         params_ = self.get_rpc_body(method, params)
         return json.dumps(params_)
 
-    def get_rpc_body(self, method, params=[]):
+    def get_rpc_body(self, method, params=None):
         """构建RPC请求体"""
+        if params is None:
+            params = []
         params_ = {
             'jsonrpc': '2.0',
             'id': str(uuid.uuid4()),
@@ -143,7 +156,7 @@ class AsyncAria2Client:
             params.append(options)
 
         rpc_body = self.get_rpc_body('aria2.addUri', params)
-        logger.info(rpc_body)
+        logger.info(f"添加URI下载: {uris}")
         result = await self.post_body(rpc_body)
         
         return result
@@ -192,6 +205,12 @@ class AsyncAria2Client:
         data = await self.post_body(rpc_body)
         return data['result']
 
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """获取复用的 HTTP session，若已关闭则重建"""
+        if self._http_session is None or self._http_session.closed:
+            self._http_session = aiohttp.ClientSession()
+        return self._http_session
+
     async def post_body(self, rpc_body):
         """
         发送RPC请求
@@ -202,36 +221,26 @@ class AsyncAria2Client:
         Returns:
             dict: RPC响应
         """
-        # 动态从数据库读取RPC_URL配置
         rpc_url = get_config_value('RPC_URL', 'localhost:6800/jsonrpc')
-        # 从RPC_URL中提取主机和端口
         url_parts = rpc_url.split('/')
         host_port = url_parts[0]
         path = '/'.join(url_parts[1:])
         
-        # 如果主机名不是localhost或IP地址，则在Docker环境中使用localhost
         if ':' in host_port:
             host, port = host_port.split(':')
             if not (host == 'localhost' or host == '127.0.0.1' or all(c.isdigit() or c == '.' for c in host)):
-                # 在Docker环境中，使用localhost
                 host = 'localhost'
             host_port = f"{host}:{port}"
         
-        # 重新构建完整URL
         full_url = f"http://{host_port}/{path}"
 
-        async with aiohttp.ClientSession() as session:
-            async with session.post(full_url, json=rpc_body) as response:
-                return await response.json()
+        session = await self._get_session()
+        async with session.post(full_url, json=rpc_body) as response:
+            return await response.json()
 
     async def re_connect(self):
-        """重新连接到WebSocket服务器"""
-        if self.reconnect:
-            logger.info("等待5秒后尝试重新连接...")
-            await asyncio.sleep(5)
-            await self.connect()
-        else:
-            logger.info("已禁用重新连接功能")
+        """重新连接到WebSocket服务器（兼容旧调用）"""
+        await self.connect()
 
     async def tell_stopped(self, offset: int, num: int):
         """获取已停止的任务列表"""
@@ -262,14 +271,14 @@ class AsyncAria2Client:
         """暂停任务"""
         params = [gid]
         jsonreq = self.parse_json_to_str('aria2.pause', params)
-        logger.info(jsonreq)
+        logger.info(f"暂停任务: {gid}")
         await self.websocket.send(jsonreq)
 
     async def unpause(self, gid: str):
         """恢复任务"""
         params = [gid]
         jsonreq = self.parse_json_to_str('aria2.unpause', params)
-        logger.info(jsonreq)
+        logger.info(f"恢复任务: {gid}")
         await self.websocket.send(jsonreq)
 
     async def remove(self, gid: str):
@@ -283,7 +292,7 @@ class AsyncAria2Client:
         """移除下载结果"""
         params = [gid]
         jsonreq = self.parse_json_to_str('aria2.removeDownloadResult', params)
-        logger.info(jsonreq)
+        logger.info(f"移除下载结果: {gid}")
         await self.websocket.send(jsonreq)
 
     async def change_global_option(self, params):

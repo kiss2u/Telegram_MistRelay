@@ -3,6 +3,14 @@
  * 用于连接服务器并接收实时状态更新
  */
 
+export function buildWsUrl(path: string, extraParams: Record<string, string> = {}): string {
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  const host = window.location.host
+  const token = localStorage.getItem('token') || ''
+  const params = new URLSearchParams({ token, ...extraParams })
+  return `${protocol}//${host}${path}?${params.toString()}`
+}
+
 export type WSMessageType = 
   | 'initial' 
   | 'download_update' 
@@ -44,10 +52,7 @@ class WebSocketClient {
   private bufferCheckInterval: number | null = null
 
   constructor(url: string = '') {
-    // 自动检测 WebSocket URL
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const host = window.location.host
-    this.url = url || `${protocol}//${host}/api/ws/status`
+    this.url = url
   }
 
   connect(): void {
@@ -55,8 +60,10 @@ class WebSocketClient {
       return
     }
 
+    const connectUrl = this.url || buildWsUrl('/api/ws/status')
+
     try {
-      this.ws = new WebSocket(this.url)
+      this.ws = new WebSocket(connectUrl)
       
       this.ws.onopen = () => {
         console.log('WebSocket 连接已建立')

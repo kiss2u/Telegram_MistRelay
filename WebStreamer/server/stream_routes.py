@@ -122,6 +122,76 @@ def is_flood_wait_error(e: Exception) -> bool:
         'Flood' in error_type
     )
 
+# ======================== 认证 API ========================
+
+@routes.post("/api/auth/login")
+async def auth_login_handler(request: web.Request):
+    """用户登录，返回 JWT token"""
+    try:
+        body = await request.json()
+        username = body.get("username", "").strip()
+        password = body.get("password", "")
+        if not username or not password:
+            return web.json_response({"success": False, "error": "用户名和密码不能为空"}, status=400)
+
+        from db import get_user_by_username
+        from auth import verify_password, create_token
+        user = get_user_by_username(username)
+        if not user or not verify_password(password, user["password_hash"]):
+            return web.json_response({"success": False, "error": "用户名或密码错误"}, status=401)
+
+        token = create_token(user["id"], user["username"])
+        return web.json_response({
+            "success": True,
+            "token": token,
+            "user": {"id": user["id"], "username": user["username"], "role": user["role"]},
+        })
+    except Exception as e:
+        logger.error(f"登录失败: {e}", exc_info=True)
+        return web.json_response({"success": False, "error": "登录失败"}, status=500)
+
+
+@routes.get("/api/auth/me", allow_head=True)
+async def auth_me_handler(request: web.Request):
+    """获取当前登录用户信息"""
+    user = request.get("user")
+    if not user:
+        return web.json_response({"success": False, "error": "未登录"}, status=401)
+    from db import get_user_by_id
+    db_user = get_user_by_id(user["uid"])
+    if not db_user:
+        return web.json_response({"success": False, "error": "用户不存在"}, status=401)
+    return web.json_response({"success": True, "user": db_user})
+
+
+@routes.post("/api/auth/password")
+async def auth_change_password_handler(request: web.Request):
+    """修改密码"""
+    try:
+        user = request.get("user")
+        if not user:
+            return web.json_response({"success": False, "error": "未登录"}, status=401)
+        body = await request.json()
+        old_password = body.get("old_password", "")
+        new_password = body.get("new_password", "")
+        if not old_password or not new_password:
+            return web.json_response({"success": False, "error": "请填写旧密码和新密码"}, status=400)
+        if len(new_password) < 6:
+            return web.json_response({"success": False, "error": "新密码长度不能少于6位"}, status=400)
+
+        from db import get_user_by_username, update_user_password
+        from auth import verify_password, hash_password
+        db_user = get_user_by_username(user["sub"])
+        if not db_user or not verify_password(old_password, db_user["password_hash"]):
+            return web.json_response({"success": False, "error": "旧密码错误"}, status=400)
+
+        update_user_password(db_user["id"], hash_password(new_password))
+        return web.json_response({"success": True, "message": "密码修改成功"})
+    except Exception as e:
+        logger.error(f"修改密码失败: {e}", exc_info=True)
+        return web.json_response({"success": False, "error": "修改密码失败"}, status=500)
+
+
 @routes.get("/api/status", allow_head=True)
 async def api_status_handler(_):
     """API状态接口"""

@@ -72,14 +72,14 @@ async def send_flood_wait_notification(wait_seconds: int):
         end_time = datetime.datetime.utcnow() + datetime.timedelta(seconds=wait_seconds)
         end_time_str = end_time.strftime('%H:%M:%S UTC')
         notification_text = (
-            f"⚠️ **Telegram 限流通知**\\n\\n"
-            f"🚫 主 bot 已被 Telegram 限流\\n"
-            f"⏰ 限流时长: {wait_seconds} 秒 ({wait_seconds // 60} 分钟)\\n"
-            f"🕐 预计恢复时间: {end_time_str}\\n\\n"
-            f"📋 **队列状态:**\\n"
-            f"• 所有新消息已进入等待队列\\n"
-            f"• 限流结束后将自动恢复处理\\n"
-            f"• 请耐心等待,无需重复发送\\n\\n"
+            f"⚠️ **Telegram 限流通知**\n\n"
+            f"🚫 主 bot 已被 Telegram 限流\n"
+            f"⏰ 限流时长: {wait_seconds} 秒 ({wait_seconds // 60} 分钟)\n"
+            f"🕐 预计恢复时间: {end_time_str}\n\n"
+            f"📋 **队列状态:**\n"
+            f"• 所有新消息已进入等待队列\n"
+            f"• 限流结束后将自动恢复处理\n"
+            f"• 请耐心等待,无需重复发送\n\n"
             f"_此消息将在限流结束后自动删除_"
         )
         msg = await backup_bot.send_message(chat_id=Var.BIN_CHANNEL, text=notification_text)

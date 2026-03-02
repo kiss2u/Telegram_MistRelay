@@ -75,14 +75,49 @@ async def compression_middleware(request, handler):
     return response
 
 
+_AUTH_WHITELIST = frozenset({
+    "/api/auth/login",
+    "/api/status",
+})
+
+
+@web.middleware
+async def auth_middleware(request, handler):
+    """JWT 认证中间件。保护所有 /api/ 路径（白名单除外）。"""
+    path = request.path
+    if not path.startswith("/api/") or path in _AUTH_WHITELIST:
+        return await handler(request)
+
+    auth_header = request.headers.get("Authorization", "")
+    token = None
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+
+    # WebSocket 连接通过 query parameter 传递 token
+    if not token:
+        token = request.query.get("token")
+
+    if not token:
+        return web.json_response({"success": False, "error": "未登录"}, status=401)
+
+    from auth import verify_token
+    payload = verify_token(token)
+    if payload is None:
+        return web.json_response({"success": False, "error": "登录已过期，请重新登录"}, status=401)
+
+    request["user"] = payload
+    return await handler(request)
+
+
 def web_server():
     logger.info("Initializing..")
     # 屏蔽 CONNECT 探测带来的 access log 噪音(不影响其它请求日志)
     logging.getLogger("aiohttp.access").addFilter(_SuppressConnectAccessFilter())
     web_app = web.Application(client_max_size=30000000)
     
-    # 添加中间件(顺序很重要)
+    # 添加中间件(顺序很重要：先错误处理，再认证，最后压缩)
     web_app.middlewares.append(compression_middleware)
+    web_app.middlewares.append(auth_middleware)
     web_app.middlewares.append(error_handler_middleware)
     
     web_app.add_routes(routes)

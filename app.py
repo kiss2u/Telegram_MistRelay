@@ -440,7 +440,8 @@ async def downloading(event):
         await auto_delete_message(msg)
         return
     
-    send_msg = queue_msg + "📥 <b>aria2下载任务</b>\n\n" if queue_msg else "📥 <b>aria2下载任务</b>\n\n"
+    empty_header = (queue_msg + "📥 <b>aria2下载任务</b>\n\n") if queue_msg else "📥 <b>aria2下载任务</b>\n\n"
+    send_msg = empty_header
     for task in tasks:
         completedLength = task['completedLength']
         totalLength = task['totalLength']
@@ -456,7 +457,7 @@ async def downloading(event):
         send_msg = send_msg + '进度: ' + prog + '\n'
         send_msg = send_msg + '大小: ' + size + '\n'
         send_msg = send_msg + '速度: ' + speed + '/s\n\n'
-    if send_msg == queue_msg + "📥 <b>aria2下载任务</b>\n\n" if queue_msg else "📥 <b>aria2下载任务</b>\n\n":
+    if send_msg == empty_header:
         msg = await event.respond(send_msg + '个别任务无法识别名称，请使用aria2Ng查看', parse_mode='html')
         await auto_delete_message(msg)
         return
@@ -763,6 +764,8 @@ async def main():
     try:
         init_db()
         log.info("本地下载数据库初始化完成")
+        from db import ensure_default_admin
+        ensure_default_admin()
     except Exception as e:
         log.warning(f"初始化本地下载数据库失败: {e}")
 

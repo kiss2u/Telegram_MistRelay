@@ -854,7 +854,14 @@ class UploadHandler:
                         else:  # Pyrogram
                             await upload_client.forward_messages(int(forward_id), admin_id, temp_msg.id)
                     
-                    # 静默处理：不再发送Telegram消息，因此无需删除
+                    # 标记图片上传完成
+                    if upload_id:
+                        try:
+                            file_name = os.path.basename(file_path)
+                            mark_upload_completed(upload_id, remote_path=f"telegram://{file_name}")
+                        except Exception as e:
+                            logger.warning(f"标记图片上传完成失败(已忽略): {e}")
+
                     # 更新任务完成跟踪状态为 'uploaded'（Telegram上传）
                     if gid:
                         try:
@@ -871,7 +878,7 @@ class UploadHandler:
                         except Exception as e:
                             logger.error(f"更新任务上传状态失败: {e}")
                     
-                    # 图片上传后不需要清理（图片通常不删除），但如果启用了AUTO_DELETE_AFTER_UPLOAD，也需要清理（动态获取配置）
+                    # 图片上传后，如果启用了AUTO_DELETE_AFTER_UPLOAD，也需要清理（动态获取配置）
                     auto_delete = get_config_value('AUTO_DELETE_AFTER_UPLOAD', True)
                     if auto_delete and os.path.exists(file_path):
                         try:
@@ -933,7 +940,14 @@ class UploadHandler:
                             admin_id = get_config_value('ADMIN_ID', 0)
                             await upload_client.forward_messages(int(forward_id), admin_id, temp_msg.id)
                     
-                    # 静默处理：不再发送Telegram消息，因此无需删除
+                    # 标记视频上传完成
+                    if upload_id:
+                        try:
+                            file_name = os.path.basename(file_path)
+                            mark_upload_completed(upload_id, remote_path=f"telegram://{file_name}")
+                        except Exception as e:
+                            logger.warning(f"标记视频上传完成失败(已忽略): {e}")
+
                     # 更新任务完成跟踪状态为 'uploaded'（Telegram上传）
                     if gid:
                         try:
@@ -1067,9 +1081,7 @@ class UploadHandler:
 
             # 静默处理：不再发送Telegram消息，错误信息已通过数据库记录
             logger.error(f"Telegram上传错误: {error_msg}")
-            # 确保减少负载
-            if client_index is not None and client_index in upload_work_loads:
-                upload_work_loads[client_index] = max(0, upload_work_loads[client_index] - 1)
+            # 注意：负载递减已在内层 finally 中处理，此处不再重复递减
         finally:
             # 释放上传并发控制信号量
             if upload_semaphore:

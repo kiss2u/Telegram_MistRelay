@@ -64,6 +64,7 @@ def hum_convert(value):
         if (value / size) < 1:
             return "%.2f%s" % (value, units[i])
         value = value / size
+    return "%.2f%s" % (value, units[-1])
 
 
 def generate_hex_string(length=16):

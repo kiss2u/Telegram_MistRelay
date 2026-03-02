@@ -35,8 +35,8 @@ class RcloneVFSManager:
         self._mount_processes: Dict[str, subprocess.Popen] = {}
         # 挂载点路径缓存
         self._mount_points: Dict[str, Path] = {}
-        # 挂载锁
-        self._mount_lock = threading.Lock()
+        # 挂载锁（使用 RLock 支持同一线程内重入，避免 mount→unmount 死锁）
+        self._mount_lock = threading.RLock()
         
         logger.info(f"VFS Manager 初始化完成,挂载基础目录: {self.mount_base}")
     

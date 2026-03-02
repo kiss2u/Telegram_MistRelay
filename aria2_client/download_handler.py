@@ -86,27 +86,24 @@ class DownloadHandler:
                 # 如果文件名为空，等待一下再重试
                 if file_name == '':
                     if first_run:
-                        await asyncio.sleep(0.5)  # 第一次运行时短暂等待
+                        await asyncio.sleep(0.5)
                     else:
                         await asyncio.sleep(3)
                     continue
                 
                 # 检查是否需要跳过小文件
-                # 动态获取配置值（支持热重载）
                 from configer import get_config_value
                 skip_small_files = get_config_value('SKIP_SMALL_FILES', False)
                 min_file_size_mb = get_config_value('MIN_FILE_SIZE_MB', 100)
                 
-                # 调试信息：仅在第一次运行时打印配置
                 if first_run:
                     logger.info(f"[跳过小文件] 配置检查: SKIP_SMALL_FILES={skip_small_files}, MIN_FILE_SIZE_MB={min_file_size_mb}MB, totalLength={totalLength}")
+                    first_run = False
                 
                 # 如果文件大小还未获取到（totalLength为0或None），等待一下再检查
                 if skip_small_files and (not totalLength or int(totalLength) == 0):
-                    if first_run:
-                        # 第一次运行时，如果文件大小为0，等待一下再重试
-                        await asyncio.sleep(0.5)
-                        continue
+                    await asyncio.sleep(0.5)
+                    continue
                 
                 if skip_small_files and totalLength and int(totalLength) > 0:
                     min_size_bytes = min_file_size_mb * 1024 * 1024  # 转换为字节
@@ -173,9 +170,10 @@ class DownloadHandler:
                     # 消息对象已保存在 self.download_messages[gid] 中
                     return
 
+        except asyncio.CancelledError:
+            logger.info(f'下载进度检查任务被取消: {gid}')
         except Exception as e:
-            logger.info('任务取消111')
-            logger.info(e)
+            logger.exception(f'下载进度检查出错 (gid={gid}): {e}')
     
     async def on_download_complete(self, result, tell_status_func):
         """

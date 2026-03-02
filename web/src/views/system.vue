@@ -172,6 +172,7 @@ import { Refresh, RefreshRight, VideoPlay, VideoPause, Delete } from '@element-p
 import { getDockerStatus, restartDocker, getDockerLogs } from '@/api'
 import type { DockerStatus } from '@/types/api'
 import { formatDate } from '@/utils/formatters'
+import { buildWsUrl } from '@/utils/websocket'
 
 const dockerStatus = ref<DockerStatus | null>(null)
 const dockerLogs = ref<string>('')
@@ -217,9 +218,7 @@ function startLogStream() {
   }
 
   connecting.value = true
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const host = window.location.host
-  const url = `${protocol}//${host}/api/system/docker/logs/ws?tail=${logLines.value}`
+  const url = buildWsUrl('/api/system/docker/logs/ws', { tail: String(logLines.value) })
 
   try {
     ws.value = new WebSocket(url)

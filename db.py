@@ -85,11 +85,25 @@ def _format_message_date(msg_date) -> str:
 
 
 def get_connection():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
-    # 启用 Write-Ahead Logging 模式，提升并发性能
     conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA busy_timeout=5000;")
     return conn
+
+
+@contextmanager
+def db_conn():
+    """获取数据库连接的上下文管理器，退出时自动 commit + close。"""
+    conn = get_connection()
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 @contextmanager
@@ -236,9 +250,23 @@ def init_db():
         cur.execute(
             "CREATE INDEX IF NOT EXISTS idx_config_category ON config_settings (category)"
         )
+
+        # 用户表
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                username        TEXT NOT NULL UNIQUE,
+                password_hash   TEXT NOT NULL,
+                role            TEXT NOT NULL DEFAULT 'admin',
+                created_at      TEXT NOT NULL,
+                updated_at      TEXT NOT NULL
+            )
+            """
+        )
     
     # 检查是否需要从config.yml迁移配置（在with块外执行，因为需要独立的连接）
-    with get_connection() as conn:
+    with db_conn() as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
         cur.execute("SELECT COUNT(*) as count FROM config_settings")
@@ -357,7 +385,7 @@ def mark_download_started(gid: str):
 
 def get_download_id_by_gid(gid: str) -> int | None:
     """根据 GID 获取下载记录 ID。"""
-    with get_connection() as conn:
+    with db_conn() as conn:
         cur = conn.cursor()
         cur.execute("SELECT id FROM downloads WHERE gid = ?", (gid,))
         row = cur.fetchone()
@@ -366,7 +394,7 @@ def get_download_id_by_gid(gid: str) -> int | None:
 
 def get_download_by_id(download_id: int):
     """根据 ID 获取下载记录。"""
-    with get_connection() as conn:
+    with db_conn() as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
         cur.execute(
@@ -652,7 +680,7 @@ def fetch_recent_downloads(limit: int = 100):
     查询最近的下载记录（按创建时间倒序），包含部分 Telegram 媒体字段和上传信息，
     用于 Web 管理页面展示。
     """
-    with get_connection() as conn:
+    with db_conn() as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
         cur.execute(
@@ -875,7 +903,7 @@ def fetch_downloads_grouped(limit: int = 100):
 
 def get_config(key: str, default=None):
     """获取配置值"""
-    with get_connection() as conn:
+    with db_conn() as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
         cur.execute(
@@ -922,7 +950,7 @@ def set_config(key: str, value: any, value_type: str = 'string', category: str =
 
 def get_all_configs(category: str = None):
     """获取所有配置或指定分类的配置"""
-    with get_connection() as conn:
+    with db_conn() as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
         if category:
@@ -1365,7 +1393,7 @@ def increment_upload_retry(upload_id: int) -> int:
 
 def get_upload_by_id(upload_id: int):
     """根据 ID 获取上传记录。"""
-    with get_connection() as conn:
+    with db_conn() as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
         cur.execute(
@@ -1383,7 +1411,7 @@ def get_upload_by_id(upload_id: int):
 
 def get_uploads_by_download(download_id: int):
     """获取某个下载任务的所有上传记录。"""
-    with get_connection() as conn:
+    with db_conn() as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
         cur.execute(
@@ -1410,7 +1438,7 @@ def fetch_recent_uploads(limit: int = 100, status: str = None, upload_target: st
     Returns:
         上传记录列表
     """
-    with get_connection() as conn:
+    with db_conn() as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
         
@@ -1454,7 +1482,7 @@ def fetch_recent_uploads(limit: int = 100, status: str = None, upload_target: st
 
 def count_uploads_by_status():
     """统计各状态的上传数量。"""
-    with get_connection() as conn:
+    with db_conn() as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
         cur.execute(
@@ -1470,7 +1498,7 @@ def count_uploads_by_status():
 
 def count_uploads_by_failure_reason():
     """统计各失败原因的数量。"""
-    with get_connection() as conn:
+    with db_conn() as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
         cur.execute(
@@ -1492,7 +1520,7 @@ def get_download_statistics():
     Returns:
         包含各种统计数据的字典
     """
-    with get_connection() as conn:
+    with db_conn() as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
         
@@ -1590,7 +1618,7 @@ def delete_all_downloads():
     Returns:
         包含删除记录数的字典
     """
-    with get_connection() as conn:
+    with db_conn() as conn:
         cur = conn.cursor()
         
         # 先统计要删除的记录数
@@ -1634,7 +1662,7 @@ def delete_download_record(download_id: int, delete_local_file: bool = True):
     """
     import os
     
-    with get_connection() as conn:
+    with db_conn() as conn:
         cur = conn.cursor()
         
         # 获取下载记录信息（包括GID和本地路径）
@@ -1712,7 +1740,7 @@ def get_upload_statistics():
     Returns:
         包含各种统计数据的字典
     """
-    with get_connection() as conn:
+    with db_conn() as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
         
@@ -1784,7 +1812,7 @@ def get_pending_uploads(upload_target: str = None):
     Returns:
         待上传记录列表
     """
-    with get_connection() as conn:
+    with db_conn() as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
         
@@ -1818,7 +1846,7 @@ def migrate_upload_data():
     将 downloads 表中的上传数据迁移到 uploads 表。
     仅迁移有 upload_status 或 remote_path 的记录。
     """
-    with get_connection() as conn:
+    with db_conn() as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
         
@@ -1871,4 +1899,52 @@ def migrate_upload_data():
         conn.commit()
         logger.info(f"已迁移 {migrated_count} 条上传记录")
         return migrated_count
+
+
+# ======================== 用户管理 ========================
+
+def ensure_default_admin():
+    """确保默认管理员账号存在。若用户表为空则自动创建。"""
+    from auth import hash_password
+    with db_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM users")
+        if cur.fetchone()[0] == 0:
+            now = _now_iso()
+            cur.execute(
+                "INSERT INTO users (username, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                ("admin", hash_password("admin123"), "admin", now, now),
+            )
+            logger.info("已创建默认管理员账号 admin / admin123，请尽快修改密码")
+
+
+def get_user_by_username(username: str) -> dict | None:
+    with db_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM users WHERE username = ?", (username,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def get_user_by_id(user_id: int) -> dict | None:
+    with db_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT id, username, role, created_at, updated_at FROM users WHERE id = ?", (user_id,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def update_user_password(user_id: int, new_password_hash: str):
+    with db_conn() as conn:
+        conn.execute(
+            "UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?",
+            (new_password_hash, _now_iso(), user_id),
+        )
+
+
+def list_users() -> list:
+    with db_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT id, username, role, created_at, updated_at FROM users ORDER BY id")
+        return [dict(r) for r in cur.fetchall()]
 

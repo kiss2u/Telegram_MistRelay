@@ -22,16 +22,16 @@
               <el-icon><User /></el-icon>
             </el-avatar>
             <div class="user-details">
-              <span class="username">管理员</span>
-              <span class="user-role">系统管理员</span>
+              <span class="username">{{ authStore.user?.username || '用户' }}</span>
+              <span class="user-role">{{ authStore.user?.role === 'admin' ? '系统管理员' : '用户' }}</span>
             </div>
             <el-icon class="dropdown-icon"><ArrowDown /></el-icon>
           </div>
           <template #dropdown>
             <el-dropdown-menu class="user-menu">
-              <el-dropdown-item command="profile" class="menu-item">
-                <el-icon><User /></el-icon>
-                <span>个人设置</span>
+              <el-dropdown-item command="password" class="menu-item">
+                <el-icon><Lock /></el-icon>
+                <span>修改密码</span>
               </el-dropdown-item>
               <el-dropdown-item command="logout" divided class="menu-item logout-item">
                 <el-icon><SwitchButton /></el-icon>
@@ -42,33 +42,113 @@
         </el-dropdown>
       </div>
     </div>
+
+    <!-- 修改密码对话框（append-to-body 脱离 header 的布局约束） -->
+    <el-dialog v-model="passwordDialogVisible" title="修改密码" width="420px" :close-on-click-modal="false" append-to-body>
+      <el-form ref="pwdFormRef" :model="pwdForm" :rules="pwdRules" label-width="80px">
+        <el-form-item label="旧密码" prop="oldPassword">
+          <el-input v-model="pwdForm.oldPassword" type="password" show-password placeholder="请输入旧密码" />
+        </el-form-item>
+        <el-form-item label="新密码" prop="newPassword">
+          <el-input v-model="pwdForm.newPassword" type="password" show-password placeholder="至少6位" />
+        </el-form-item>
+        <el-form-item label="确认密码" prop="confirmPassword">
+          <el-input v-model="pwdForm.confirmPassword" type="password" show-password placeholder="再次输入新密码" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="passwordDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="pwdLoading" @click="submitPassword">确认修改</el-button>
+      </template>
+    </el-dialog>
   </el-header>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
-import { useRoute } from 'vue-router'
-import { User, ArrowDown, SwitchButton, HomeFilled } from '@element-plus/icons-vue'
+import { computed, ref, reactive, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { ElMessage, type FormInstance } from 'element-plus'
+import { User, ArrowDown, SwitchButton, HomeFilled, Lock } from '@element-plus/icons-vue'
+import { useAuthStore } from '@/stores/auth'
+import { changePassword } from '@/api'
 
 const route = useRoute()
+const router = useRouter()
+const authStore = useAuthStore()
+
+onMounted(() => {
+  if (!authStore.user) {
+    authStore.fetchUser()
+  }
+})
 
 const breadcrumb = computed(() => {
   const routeMap: Record<string, string> = {
     '/downloads': '下载管理',
     '/tasks': '任务队列',
     '/settings': '系统设置',
-    '/system': '系统管理'
+    '/system': '系统管理',
+    '/drive': '网盘管理',
+    '/logs': '系统日志',
   }
   return routeMap[route.path]
 })
 
+// 修改密码
+const passwordDialogVisible = ref(false)
+const pwdLoading = ref(false)
+const pwdFormRef = ref<FormInstance>()
+const pwdForm = reactive({ oldPassword: '', newPassword: '', confirmPassword: '' })
+const pwdRules = {
+  oldPassword: [{ required: true, message: '请输入旧密码', trigger: 'blur' }],
+  newPassword: [
+    { required: true, message: '请输入新密码', trigger: 'blur' },
+    { min: 6, message: '密码长度不能少于6位', trigger: 'blur' },
+  ],
+  confirmPassword: [
+    { required: true, message: '请确认新密码', trigger: 'blur' },
+    {
+      validator: (_: any, value: string, callback: any) => {
+        if (value !== pwdForm.newPassword) callback(new Error('两次密码不一致'))
+        else callback()
+      },
+      trigger: 'blur',
+    },
+  ],
+}
+
+async function submitPassword() {
+  if (!pwdFormRef.value) return
+  const valid = await pwdFormRef.value.validate().catch(() => false)
+  if (!valid) return
+  pwdLoading.value = true
+  try {
+    const res = await changePassword(pwdForm.oldPassword, pwdForm.newPassword)
+    if (res.success) {
+      ElMessage.success('密码修改成功，请重新登录')
+      passwordDialogVisible.value = false
+      authStore.logout()
+      router.push('/login')
+    } else {
+      ElMessage.error(res.error || '修改失败')
+    }
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.error || '修改失败')
+  } finally {
+    pwdLoading.value = false
+  }
+}
+
 function handleCommand(command: string) {
   if (command === 'logout') {
-    // TODO: 实现退出登录逻辑
-    console.log('退出登录')
-  } else if (command === 'profile') {
-    // TODO: 实现个人设置逻辑
-    console.log('个人设置')
+    authStore.logout()
+    router.push('/login')
+    ElMessage.success('已退出登录')
+  } else if (command === 'password') {
+    pwdForm.oldPassword = ''
+    pwdForm.newPassword = ''
+    pwdForm.confirmPassword = ''
+    passwordDialogVisible.value = true
   }
 }
 </script>

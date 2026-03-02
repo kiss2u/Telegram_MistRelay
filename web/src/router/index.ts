@@ -1,7 +1,14 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
 
 const routes: RouteRecordRaw[] = [
+  {
+    path: '/login',
+    name: 'Login',
+    component: () => import('@/views/login.vue'),
+    meta: { public: true },
+  },
   {
     path: '/',
     redirect: '/dashboard'
@@ -46,4 +53,14 @@ const routes: RouteRecordRaw[] = [
 export const router = createRouter({
   history: createWebHistory(),
   routes
+})
+
+router.beforeEach((to) => {
+  const auth = useAuthStore()
+  if (!to.meta.public && !auth.isLoggedIn) {
+    return { name: 'Login', query: { redirect: to.fullPath } }
+  }
+  if (to.name === 'Login' && auth.isLoggedIn) {
+    return { path: '/' }
+  }
 })
