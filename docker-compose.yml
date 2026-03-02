@@ -18,6 +18,7 @@ services:
       - ./downloads:/root/downloads  # 下载目录(可根据需要修改)
       - ./rclone:/root/.config/rclone  # rclone配置目录
       - ./cache/thumbnails:/app/cache/thumbnails  # 缩略图缓存目录
+      - ./cache/rclone:/app/cache/rclone # rclone VFS cache
       - /var/run/docker.sock:/var/run/docker.sock  # Docker socket(用于系统管理模块控制容器,需要root权限)
     environment:
       - TZ=Asia/Shanghai

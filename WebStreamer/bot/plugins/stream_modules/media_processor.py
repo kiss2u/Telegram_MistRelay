@@ -203,7 +203,7 @@ async def process_media_group(messages: list, queue_reply_msg=None):
                             
                             await asyncio.sleep(0.3)
                         except Exception as e:
-                            logger.error(f"检查任务状态失败: {e}")
+                            logger.error(f"检查任务状态失败: {e}", exc_info=True)
                             # 如果无法检查状态，假设成功
                             return True
                 
@@ -239,7 +239,7 @@ async def process_media_group(messages: list, queue_reply_msg=None):
                                         # 跳过这个文件，继续处理下一个（静默处理，不发送通知）
                                         continue
                         except Exception as e:
-                            logger.error(f"检查文件大小失败: {e}")
+                            logger.error(f"检查文件大小失败: {e}", exc_info=True)
                             # 如果检查失败，继续添加下载任务
                     
                     while retry_count <= max_retries and not added_successfully:
@@ -425,7 +425,7 @@ async def process_media_group(messages: list, queue_reply_msg=None):
                 f'⚠️ 处理媒体组时出错，请稍后重试'
             )
             await first_msg.reply(error_reply, quote=True, parse_mode=ParseMode.HTML)
-        except:
+        except Exception:
             pass
         return []  # 返回空列表
 

@@ -50,6 +50,11 @@
         <el-icon><Tools /></el-icon>
         <template #title>系统管理</template>
       </el-menu-item>
+      
+      <el-menu-item index="/logs" class="menu-item">
+        <el-icon><Document /></el-icon>
+        <template #title>系统日志</template>
+      </el-menu-item>
     </el-menu>
     
     <div class="sidebar-footer">
@@ -75,6 +80,7 @@ import {
   Folder,
   Setting,
   Tools,
+  Document,
   Expand,
   Fold
 } from '@element-plus/icons-vue'

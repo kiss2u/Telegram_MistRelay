@@ -115,16 +115,16 @@ class ByteStreamer:
                 logger.debug(f"Cached media session for DC {file_id.dc_id} is invalid, recreating...")
                 try:
                     await media_session.stop()
-                except:
+                except Exception:
                     pass
                 if file_id.dc_id in client.media_sessions:
                     del client.media_sessions[file_id.dc_id]
                 media_session = None
             except Exception as e:
-                logger.warning(f"Error checking cached media session: {e}")
+                logger.warning(f"Error checking cached media session: {e}", exc_info=True)
                 try:
                     await media_session.stop()
-                except:
+                except Exception:
                     pass
                 if file_id.dc_id in client.media_sessions:
                     del client.media_sessions[file_id.dc_id]
@@ -150,7 +150,7 @@ class ByteStreamer:
                                 cached_session.connection.protocol.encrypt is not None):
                                 logger.debug(f"Using newly created media session for DC {file_id.dc_id}")
                                 return cached_session
-                        except:
+                        except Exception:
                             pass
                     
                     media_session = Session(

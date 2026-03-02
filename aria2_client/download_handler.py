@@ -1,6 +1,7 @@
 """
 Aria2下载事件处理模块
 """
+import logging
 import asyncio
 import os
 import time
@@ -19,6 +20,8 @@ from .constants import (
     FILE_MODIFIED_TIME_WINDOW
 )
 
+
+logger = logging.getLogger(__name__)
 
 class DownloadHandler:
     """处理Aria2下载事件"""
@@ -49,14 +52,14 @@ class DownloadHandler:
             tell_status_func: 获取任务状态的函数
         """
         gid = result['params'][0]['gid']
-        print(f"===========下载 开始 任务id:{gid}")
+        logger.info(f"===========下载 开始 任务id:{gid}")
         if self.bot:
             # 不发送初始消息，直接启动进度检查任务
             # 进度检查任务会在第一次运行时发送消息
             # 初始化消息对象存储
             self.download_messages[gid] = None
             asyncio.create_task(self.check_download_progress(gid, None, tell_status_func))
-            print('轮训进度')
+            logger.info('轮训进度')
     
     async def check_download_progress(self, gid, msg, tell_status_func):
         """
@@ -96,7 +99,7 @@ class DownloadHandler:
                 
                 # 调试信息：仅在第一次运行时打印配置
                 if first_run:
-                    print(f"[跳过小文件] 配置检查: SKIP_SMALL_FILES={skip_small_files}, MIN_FILE_SIZE_MB={min_file_size_mb}MB, totalLength={totalLength}")
+                    logger.info(f"[跳过小文件] 配置检查: SKIP_SMALL_FILES={skip_small_files}, MIN_FILE_SIZE_MB={min_file_size_mb}MB, totalLength={totalLength}")
                 
                 # 如果文件大小还未获取到（totalLength为0或None），等待一下再检查
                 if skip_small_files and (not totalLength or int(totalLength) == 0):
@@ -110,16 +113,16 @@ class DownloadHandler:
                     file_size_bytes = int(totalLength)
                     if file_size_bytes < min_size_bytes:
                         # 文件小于最小大小，移除任务
-                        print(f"[跳过小文件] ✅ 任务 {gid} 文件大小 {byte2_readable(file_size_bytes)} ({file_size_bytes} 字节) 小于 {min_file_size_mb}MB ({min_size_bytes} 字节)，移除任务")
-                        print(f"[跳过小文件] 配置: SKIP_SMALL_FILES={skip_small_files}, MIN_FILE_SIZE_MB={min_file_size_mb}")
+                        logger.info(f"[跳过小文件] ✅ 任务 {gid} 文件大小 {byte2_readable(file_size_bytes)} ({file_size_bytes} 字节) 小于 {min_file_size_mb}MB ({min_size_bytes} 字节)，移除任务")
+                        logger.info(f"[跳过小文件] 配置: SKIP_SMALL_FILES={skip_small_files}, MIN_FILE_SIZE_MB={min_file_size_mb}")
                         
                         # 移除任务
                         if self.client:
                             try:
                                 await self.client.remove(gid)
-                                print(f"[跳过小文件] 已移除任务 {gid}")
+                                logger.info(f"[跳过小文件] 已移除任务 {gid}")
                             except Exception as e:
-                                print(f"[跳过小文件] 移除任务失败: {e}")
+                                logger.error(f"[跳过小文件] 移除任务失败: {e}")
                         
                         # 静默处理，不发送通知消息
                         
@@ -128,9 +131,9 @@ class DownloadHandler:
                             from db import mark_download_failed
                             error_msg = f"文件大小 {byte2_readable(int(totalLength))} 小于最小限制 {min_file_size_mb}MB，已跳过下载"
                             mark_download_failed(gid, error_msg)
-                            print(f"[跳过小文件] 已记录到数据库: {gid}")
+                            logger.info(f"[跳过小文件] 已记录到数据库: {gid}")
                         except Exception as e:
-                            print(f"[跳过小文件] 记录到数据库失败: {e}")
+                            logger.error(f"[跳过小文件] 记录到数据库失败: {e}")
                         
                         # 从消息字典中移除
                         if gid in self.download_messages:
@@ -171,8 +174,8 @@ class DownloadHandler:
                     return
 
         except Exception as e:
-            print('任务取消111')
-            print(e)
+            logger.info('任务取消111')
+            logger.info(e)
     
     async def on_download_complete(self, result, tell_status_func):
         """
@@ -187,12 +190,12 @@ class DownloadHandler:
         
         # 防重复处理：如果该GID已经处理过，直接跳过
         if gid in self.completed_gids:
-            print(f"[防重复] 任务 {gid} 已在内存集合中，跳过重复通知")
+            logger.info(f"[防重复] 任务 {gid} 已在内存集合中，跳过重复通知")
             return
         
         # 立即添加到completed_gids，防止并发情况下的重复处理
         self.completed_gids.add(gid)
-        print(f"[防重复] 任务 {gid} 已添加到内存集合")
+        logger.info(f"[防重复] 任务 {gid} 已添加到内存集合")
             
         # 数据库查重（更可靠的持久化检查）
         try:
@@ -201,13 +204,13 @@ class DownloadHandler:
                 existing_uploads = get_uploads_by_download(download_id)
                 for upload in existing_uploads:
                     if upload['status'] in ['completed', 'uploading', 'cleaned']:
-                         print(f"[防重复] 检测到数据库中已有处理记录 (upload_id: {upload['id']}, 状态: {upload['status']})，跳过")
+                         logger.info(f"[防重复] 检测到数据库中已有处理记录 (upload_id: {upload['id']}, 状态: {upload['status']})，跳过")
                          return
-                print(f"[防重复] 数据库查重通过，download_id: {download_id}")
+                logger.info(f"[防重复] 数据库查重通过，download_id: {download_id}")
         except Exception as e:
-            print(f"[防重复] 数据库查重失败: {e}，继续处理")
+            logger.error(f"[防重复] 数据库查重失败: {e}，继续处理")
         
-        print(f"===========下载 完成 任务id:{gid}")
+        logger.info(f"===========下载 完成 任务id:{gid}")
         
         # 更新任务完成跟踪状态为 'completed'
         try:
@@ -221,7 +224,7 @@ class DownloadHandler:
                         'completed_at': asyncio_module.get_event_loop().time()
                     }
         except Exception as e:
-            print(f"更新任务完成跟踪状态失败: {e}")
+            logger.error(f"更新任务完成跟踪状态失败: {e}")
         
         tellStatus = await tell_status_func(gid)
         files = tellStatus['files']
@@ -266,14 +269,14 @@ class DownloadHandler:
                                             if expected_size > 0:
                                                 from .utils import verify_file_size
                                                 if not verify_file_size(potential_path, expected_size, tolerance=1024):
-                                                    print(f"[下载] 文件大小不匹配,跳过: {potential_path}")
+                                                    logger.info(f"[下载] 文件大小不匹配,跳过: {potential_path}")
                                                     continue  # 继续查找其他文件
                                             
                                             actual_path = potential_path
-                                            print(f"找到实际文件路径: {actual_path} (原始路径: {path})")
+                                            logger.info(f"找到实际文件路径: {actual_path} (原始路径: {path})")
                                             break
                         except Exception as e:
-                            print(f"查找文件时出错: {e}")
+                            logger.error(f"查找文件时出错: {e}")
 
                 
                 # 再次检查文件是否存在
@@ -286,28 +289,28 @@ class DownloadHandler:
                             for up in existing_uploads_check:
                                 # 只要有完成、上传中或已清理的记录，就说明之前的流程已经跑通了
                                 if up['status'] in ['completed', 'uploading', 'cleaned']:
-                                    print(f"虽然文件不存在，但发现已有处理记录 (ID: {up['id']}, 状态: {up['status']})，忽略文件缺失错误")
+                                    logger.error(f"虽然文件不存在，但发现已有处理记录 (ID: {up['id']}, 状态: {up['status']})，忽略文件缺失错误")
                                     return
                     except Exception as double_check_e:
-                        print(f"二次查重失败: {double_check_e}")
+                        logger.error(f"二次查重失败: {double_check_e}")
 
-                    print(f"文件不存在: {path} (尝试查找后仍不存在)")
+                    logger.info(f"文件不存在: {path} (尝试查找后仍不存在)")
                     
                     # 调试：列出目录文件
                     try:
                         dir_path = os.path.dirname(path)
                         if os.path.exists(dir_path):
                             files_in_dir = os.listdir(dir_path)
-                            print(f"目录 {dir_path} 下的文件: {files_in_dir}")
+                            logger.info(f"目录 {dir_path} 下的文件: {files_in_dir}")
                             # 记录到错误消息中（前5个文件）
                             file_list_str = ', '.join(files_in_dir[:5])
                             if len(files_in_dir) > 5:
                                 file_list_str += ', ...'
                         else:
-                            print(f"目录不存在: {dir_path}")
+                            logger.info(f"目录不存在: {dir_path}")
                             file_list_str = "目录不存在"
                     except Exception as ls_e:
-                        print(f"列出目录失败: {ls_e}")
+                        logger.error(f"列出目录失败: {ls_e}")
                         file_list_str = f"无法列出目录: {ls_e}"
 
                     # 记录失败
@@ -316,7 +319,7 @@ class DownloadHandler:
                             from db import mark_upload_failed
                             mark_upload_failed(upload_id, 'file_not_found', f"文件不存在: {actual_path or path}\n当前目录文件: {file_list_str}")
                         except Exception as e:
-                            print(f"记录上传失败出错: {e}")
+                            logger.error(f"记录上传失败出错: {e}")
                     
                     # 静默处理：不再发送Telegram消息，错误信息已通过数据库记录
                     # WebSocket推送已在 mark_upload_failed 中实现
@@ -329,7 +332,7 @@ class DownloadHandler:
                     if os.path.exists(actual_path):
                         file_size_bytes = os.path.getsize(actual_path)
                         file_size = byte2_readable(file_size_bytes)
-                except:
+                except Exception:
                     pass
                 
                 # 标记数据库中的下载任务为完成（会自动触发WebSocket推送）
@@ -337,7 +340,7 @@ class DownloadHandler:
                     total_length = int(tellStatus.get("totalLength") or 0)
                     mark_download_completed(gid, actual_path, total_length or None)
                 except Exception as db_e:
-                    print(f"更新数据库下载完成状态出错: {db_e}")
+                    logger.error(f"更新数据库下载完成状态出错: {db_e}")
 
                 # 静默处理：不再发送Telegram消息，所有信息通过WebSocket推送到Web界面
                 # WebSocket推送已在 mark_download_completed 中实现
@@ -348,7 +351,7 @@ class DownloadHandler:
                 up_google_drive = get_config_value('UP_GOOGLE_DRIVE', False)
                 up_telegram = get_config_value('UP_TELEGRAM', False)
                 
-                print(f"[上传选择] UP_ONEDRIVE={up_onedrive}, UP_GOOGLE_DRIVE={up_google_drive}, UP_TELEGRAM={up_telegram}")
+                logger.info(f"[上传选择] UP_ONEDRIVE={up_onedrive}, UP_GOOGLE_DRIVE={up_google_drive}, UP_TELEGRAM={up_telegram}")
                 
                 if up_onedrive:
                     # 创建上传记录
@@ -363,16 +366,16 @@ class DownloadHandler:
                             file_name_display = os.path.basename(actual_path)
                             remote_path = f"{rclone_remote}:{rclone_path}/{file_name_display}"
                             upload_id = create_upload(download_id, 'onedrive', remote_path=remote_path)
-                            print(f"创建上传记录成功，ID: {upload_id}")
+                            logger.info(f"创建上传记录成功，ID: {upload_id}")
                     except Exception as e:
-                        print(f"创建上传记录失败: {e}")
+                        logger.error(f"创建上传记录失败: {e}")
 
                     # 使用rclone上传到OneDrive，异步非阻塞执行
                     # 静默处理：不再传递msg参数，所有信息通过WebSocket推送
                     asyncio.create_task(
                         self.upload_handler.upload_to_onedrive(actual_path, None, gid, upload_id=upload_id)
                     )
-                    print(f"[上传] 已启动OneDrive上传任务(异步): {os.path.basename(actual_path)}")
+                    logger.info(f"[上传] 已启动OneDrive上传任务(异步): {os.path.basename(actual_path)}")
                 elif up_google_drive:
                     # 创建上传记录
                     upload_id = None
@@ -386,16 +389,16 @@ class DownloadHandler:
                             file_name_display = os.path.basename(actual_path)
                             remote_path = f"{gdrive_remote}:{gdrive_path}/{file_name_display}"
                             upload_id = create_upload(download_id, 'gdrive', remote_path=remote_path)
-                            print(f"创建上传记录成功，ID: {upload_id}")
+                            logger.info(f"创建上传记录成功，ID: {upload_id}")
                     except Exception as e:
-                        print(f"创建上传记录失败: {e}")
+                        logger.error(f"创建上传记录失败: {e}")
 
                     # 使用rclone上传到Google Drive，异步非阻塞执行
                     # 静默处理：不再传递msg参数，所有信息通过WebSocket推送
                     asyncio.create_task(
                         self.upload_handler.upload_to_google_drive(actual_path, None, gid, upload_id=upload_id)
                     )
-                    print(f"[上传] 已启动Google Drive上传任务(异步): {os.path.basename(actual_path)}")
+                    logger.info(f"[上传] 已启动Google Drive上传任务(异步): {os.path.basename(actual_path)}")
                 elif up_telegram:
                     # 创建上传记录
                     upload_id = None
@@ -403,15 +406,15 @@ class DownloadHandler:
                         download_id = get_download_id_by_gid(gid)
                         if download_id:
                             upload_id = create_upload(download_id, 'telegram')
-                            print(f"创建上传记录成功，ID: {upload_id}")
+                            logger.info(f"创建上传记录成功，ID: {upload_id}")
                     except Exception as e:
-                        print(f"创建上传记录失败: {e}")
+                        logger.error(f"创建上传记录失败: {e}")
                         
                     # 上传到Telegram，异步非阻塞执行
                     asyncio.create_task(
                         self.upload_handler.upload_to_telegram_with_load_balance(actual_path, gid, upload_id=upload_id)
                     )
-                    print(f"[上传] 已启动Telegram上传任务(异步): {os.path.basename(actual_path)}")
+                    logger.info(f"[上传] 已启动Telegram上传任务(异步): {os.path.basename(actual_path)}")
     
     async def on_download_pause(self, result, tell_status_func):
         """
@@ -422,13 +425,13 @@ class DownloadHandler:
             tell_status_func: 获取任务状态的函数
         """
         gid = result['params'][0]['gid']
-        print(f"===========下载 暂停 任务id:{gid}")
+        logger.info(f"===========下载 暂停 任务id:{gid}")
         
         # 更新数据库中的下载任务状态为暂停（会自动触发WebSocket推送）
         try:
             mark_download_paused(gid)
         except Exception as db_e:
-            print(f"更新数据库下载暂停状态出错: {db_e}")
+            logger.error(f"更新数据库下载暂停状态出错: {db_e}")
         
         # 静默处理：不再发送Telegram消息，暂停状态通过WebSocket推送
     
@@ -444,13 +447,13 @@ class DownloadHandler:
         tellStatus = await tell_status_func(gid)
         errorCode = tellStatus['errorCode']
         errorMessage = tellStatus['errorMessage']
-        print(f'===========下载 错误 任务id:{gid} 错误码: {errorCode} 错误信息{errorMessage}')
+        logger.error(f'===========下载 错误 任务id:{gid} 错误码: {errorCode} 错误信息{errorMessage}')
         
         # 标记数据库中的下载任务为失败（会自动触发WebSocket推送）
         try:
             mark_download_failed(gid, errorMessage)
         except Exception as db_e:
-            print(f"更新数据库下载失败状态出错: {db_e}")
+            logger.error(f"更新数据库下载失败状态出错: {db_e}")
         
         # 静默处理：不再发送Telegram消息，错误信息已通过数据库记录
         # WebSocket推送已在 mark_download_failed 中实现

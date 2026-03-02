@@ -291,3 +291,42 @@ export function deleteFile(remote: string, path: string, isDir: boolean = false)
     }
   }).then(response => response.data)
 }
+
+// ==================== 日志管理 API ====================
+
+export interface LogFile {
+  name: string
+  path: string
+  size: number
+  modified: string
+}
+
+export interface LogFilesResponse {
+  success: boolean
+  files: LogFile[]
+  error?: string
+}
+
+export interface LogContentResponse {
+  success: boolean
+  total: number
+  lines: string[]
+  error?: string
+}
+
+export function getLogFiles(): Promise<LogFilesResponse> {
+  return api.get<LogFilesResponse>('/logs/files').then(r => r.data)
+}
+
+export function getLogContent(params: {
+  file?: string
+  tail?: number
+  level?: string
+  keyword?: string
+}): Promise<LogContentResponse> {
+  return api.get<LogContentResponse>('/logs', { params }).then(r => r.data)
+}
+
+export function getLogDownloadUrl(filename: string): string {
+  return `/api/logs/download/${encodeURIComponent(filename)}`
+}

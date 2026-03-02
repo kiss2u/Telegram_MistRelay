@@ -214,7 +214,7 @@ async def docker_status_handler(request: web.Request):
                         if "docker" in line:
                             container_id = line.split("/")[-1].strip()
                             break
-            except:
+            except Exception:
                 pass
             
             # 方法2: 尝试通过容器名称查找（优先使用docker-compose的container_name）
@@ -240,7 +240,7 @@ async def docker_status_handler(request: web.Request):
                         if containers:
                             container = containers[0]
                             break
-                    except:
+                    except Exception:
                         continue
             
             # 如果还是找不到，尝试获取所有容器并匹配
@@ -317,7 +317,7 @@ async def docker_restart_handler(request: web.Request):
                         if "docker" in line:
                             container_id = line.split("/")[-1].strip()
                             break
-            except:
+            except Exception:
                 pass
             
             # 方法2: 尝试通过容器名称查找（优先使用docker-compose的container_name）
@@ -343,7 +343,7 @@ async def docker_restart_handler(request: web.Request):
                         if containers:
                             container = containers[0]
                             break
-                    except:
+                    except Exception:
                         continue
             
             # 如果还是找不到，尝试获取所有容器并匹配
@@ -412,7 +412,7 @@ async def docker_logs_handler(request: web.Request):
                         if "docker" in line:
                             container_id = line.split("/")[-1].strip()
                             break
-            except:
+            except Exception:
                 pass
         
         if not container_id:
@@ -434,7 +434,7 @@ async def docker_logs_handler(request: web.Request):
                         if "docker" in line:
                             container_id = line.split("/")[-1].strip()
                             break
-            except:
+            except Exception:
                 pass
             
             # 方法2: 尝试通过容器名称查找（优先使用docker-compose的container_name）
@@ -460,7 +460,7 @@ async def docker_logs_handler(request: web.Request):
                         if containers:
                             container = containers[0]
                             break
-                    except:
+                    except Exception:
                         continue
             
             # 如果还是找不到，尝试获取所有容器并匹配
@@ -599,7 +599,7 @@ async def docker_logs_ws_handler(request: web.Request):
                         if "docker" in line:
                             container_id = line.split("/")[-1].strip()
                             break
-            except:
+            except Exception:
                 pass
             
             # 方法2: 尝试通过容器名称查找
@@ -623,7 +623,7 @@ async def docker_logs_ws_handler(request: web.Request):
                         if containers:
                             container = containers[0]
                             break
-                    except:
+                    except Exception:
                         continue
             
             # 如果还是找不到，尝试获取所有容器并匹配
@@ -653,7 +653,7 @@ async def docker_logs_ws_handler(request: web.Request):
                     "logs": logs
                 })
             except Exception as e:
-                logger.error(f"获取历史日志失败: {e}")
+                logger.error(f"获取历史日志失败: {e}", exc_info=True)
                 await ws.send_json({
                     "type": "error",
                     "message": f"获取历史日志失败: {str(e)}"
@@ -695,11 +695,11 @@ async def docker_logs_ws_handler(request: web.Request):
                                         loop
                                     )
                             except Exception as e:
-                                logger.error(f"处理日志行失败: {e}")
+                                logger.error(f"处理日志行失败: {e}", exc_info=True)
                                 continue
                                 
                     except Exception as e:
-                        logger.error(f"日志流线程错误: {e}")
+                        logger.error(f"日志流线程错误: {e}", exc_info=True)
                         if not ws.closed:
                             asyncio.run_coroutine_threadsafe(
                                 ws.send_json({
@@ -736,7 +736,7 @@ async def docker_logs_ws_handler(request: web.Request):
                     
                         
             except Exception as e:
-                logger.error(f"日志流错误: {e}")
+                logger.error(f"日志流错误: {e}", exc_info=True)
                 await ws.send_json({
                     "type": "error",
                     "message": f"日志流错误: {str(e)}"
@@ -762,7 +762,7 @@ async def docker_logs_ws_handler(request: web.Request):
                 "type": "error",
                 "message": f"连接错误: {str(e)}"
             })
-        except:
+        except Exception:
             pass
     
     finally:
@@ -1666,7 +1666,7 @@ async def ws_status_handler(request: web.Request):
                     data = json.loads(msg.data)
                     if data.get("type") == "ping":
                         await ws.send_json({"type": "pong"})
-                except:
+                except Exception:
                     pass
             elif msg.type == web.WSMsgType.ERROR:
                 logger.error(f"WebSocket 错误: {ws.exception()}")
@@ -2344,3 +2344,405 @@ async def media_streamer(request: web.Request, message_id: int, secure_hash: str
         },
     )
 
+@routes.get("/api/rclone/cache/monitor")
+async def monitor_cache_status(request: web.Request):
+    """WebSocket monitor for rclone cache status"""
+    ws = web.WebSocketResponse()
+    await ws.prepare(request)
+
+    try:
+        remote = request.query.get('remote')
+        path = request.query.get('path')
+
+        if not remote or not path:
+            await ws.send_json({"error": "Missing remote or path"})
+            await ws.close()
+            return ws
+
+        # Construct cache file path
+        # cache dir: /app/cache/rclone/{remote}/vfs/{path}
+        cache_base = Path(f"/app/cache/rclone/{remote}/vfs")
+        cache_file = cache_base / path.lstrip('/')
+
+        # Get total size from vfs manager or by querying file info?
+        # Use rclone lsjson to get total size? or just lstat the mount point?
+        # Better to stat the mount point file to get total size.
+        from rclone_vfs_manager import get_vfs_manager
+        vfs = get_vfs_manager()
+        mount_file = vfs.get_file_path(remote, path)
+        
+        if not mount_file or not mount_file.exists():
+             await ws.send_json({"error": "File not found on mount"})
+             await ws.close()
+             return ws
+             
+        total_size = mount_file.stat().st_size
+
+        while True:
+            if ws.closed:
+                break
+
+            try:
+                if cache_file.exists():
+                    # rclone cache file is sparse? or fully allocated?
+                    # Usually rclone sparse file support is OS dependent.
+                    # st_blocks * 512 is the actual allocated size on disk.
+                    stat = cache_file.stat()
+                    cached_size = stat.st_blocks * 512
+                    
+                    # Cap cached size at total_size
+                    if cached_size > total_size:
+                        cached_size = total_size
+                    
+                    percent = (cached_size / total_size) * 100 if total_size > 0 else 0
+                    
+                    status = "caching"
+                    if cached_size >= total_size or percent >= 100:
+                        status = "fully_cached"
+                    
+                    await ws.send_json({
+                        "status": status,
+                        "cached_size": cached_size,
+                        "total_size": total_size,
+                        "percent": round(percent, 2)
+                    })
+                    
+                    if status == "fully_cached":
+                        break
+                else:
+                     await ws.send_json({
+                        "status": "waiting",
+                        "cached_size": 0,
+                        "total_size": total_size,
+                        "percent": 0
+                    })
+            except Exception as e:
+                logger.error(f"Error checking cache: {e}", exc_info=True)
+                
+            await asyncio.sleep(2) # Poll every 2 seconds
+
+    except Exception as e:
+        logger.error(f"Cache monitor error: {e}", exc_info=True)
+    finally:
+        if not ws.closed:
+            await ws.close()
+    return ws
+
+# ==================== 文件管理 API ====================
+
+@routes.get("/api/files/list")
+async def list_files_handler(request: web.Request):
+    """
+    API接口: 列出指定目录下的文件和文件夹
+    参数: path (可选, 默认为根目录 /)
+    """
+    try:
+        # 获取请求路径
+        path_param = request.query.get("path", "/")
+        
+        # 基础目录 (默认为下载目录或者根目录, 这里为了灵活暂时设为根目录, 实际应限制在安全目录下)
+        # 注意: 生产环境应严格限制 base_path 以防止路径遍历攻击
+        base_path = "/" 
+        
+        # 拼接完整路径
+        if path_param == "/":
+            target_path = base_path
+        else:
+            # 移除开头的 /
+            clean_path = path_param.lstrip("/")
+            target_path = os.path.join(base_path, clean_path)
+        
+        if not os.path.exists(target_path):
+             return web.json_response({
+                "success": False,
+                "error": f"路径不存在: {path_param}"
+            }, status=404)
+            
+        if not os.path.isdir(target_path):
+            return web.json_response({
+                "success": False,
+                "error": f"路径不是目录: {path_param}"
+            }, status=400)
+            
+        # 遍历目录
+        files = []
+        try:
+            with os.scandir(target_path) as entries:
+                for entry in entries:
+                    try:
+                        stat = entry.stat()
+                        files.append({
+                            "name": entry.name,
+                            "path": os.path.join(path_param if path_param != "/" else "", entry.name), # 相对 API 的路径
+                            "is_dir": entry.is_dir(),
+                            "size": stat.st_size,
+                            "modified_time": datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
+                        })
+                    except Exception as e:
+                        logger.warning(f"无法获取文件信息 {entry.name}: {e}")
+                        continue
+        except PermissionError:
+             return web.json_response({
+                "success": False,
+                "error": f"没有权限访问目录: {path_param}"
+            }, status=403)
+            
+        # 排序: 文件夹在前, 然后按名称排序
+        files.sort(key=lambda x: (not x["is_dir"], x["name"].lower()))
+        
+        return web.json_response({
+            "success": True,
+            "path": path_param,
+            "files": files
+        })
+        
+    except Exception as e:
+        logger.error(f"列出文件失败: {e}", exc_info=True)
+        return web.json_response({
+            "success": False,
+            "error": str(e)
+        }, status=500)
+
+
+@routes.get("/api/files/download")
+async def download_file_handler(request: web.Request):
+    """
+    API接口: 下载文件
+    参数: path
+    """
+    try:
+        path_param = request.query.get("path")
+        if not path_param:
+            return web.json_response({"success": False, "error": "缺少 path 参数"}, status=400)
+            
+        base_path = "/"
+        clean_path = path_param.lstrip("/")
+        target_path = os.path.join(base_path, clean_path)
+        
+        if not os.path.exists(target_path):
+            return web.json_response({"success": False, "error": "文件不存在"}, status=404)
+        
+        if os.path.isdir(target_path):
+            return web.json_response({"success": False, "error": "无法直接下载文件夹"}, status=400)
+            
+        # 使用 FileResponse 发送文件
+        return web.FileResponse(target_path)
+        
+    except Exception as e:
+        logger.error(f"下载文件失败: {e}", exc_info=True)
+        return web.json_response({
+            "success": False,
+            "error": str(e)
+        }, status=500)
+
+
+@routes.post("/api/files/upload")
+async def upload_file_handler(request: web.Request):
+    """
+    API接口: 上传文件
+    Form Data: 
+      - path: 目标文件夹路径 (可选, 默认为 /)
+      - file: 文件内容
+    """
+    try:
+        reader = await request.multipart()
+        
+        # 读取字段
+        target_dir = "/"
+        file_field = None
+        
+        while True:
+            field = await reader.next()
+            if field is None:
+                break
+            
+            if field.name == 'path':
+                path_val = await field.read(decode=True)
+                target_dir = path_val.decode('utf-8')
+            elif field.name == 'file':
+                file_field = field
+                break # 找到文件就开始处理
+        
+        if not file_field:
+            return web.json_response({"success": False, "error": "未找到文件字段"}, status=400)
+            
+        filename = file_field.filename
+        if not filename:
+             return web.json_response({"success": False, "error": "文件名为空"}, status=400)
+             
+        # 构建保存路径
+        if target_dir == "/":
+            save_dir = "/"
+        else:
+            save_dir = os.path.join("/", target_dir.lstrip("/"))
+            
+        if not os.path.exists(save_dir):
+             os.makedirs(save_dir, exist_ok=True)
+             
+        save_path = os.path.join(save_dir, filename)
+        
+        # 写入文件
+        size = 0
+        with open(save_path, 'wb') as f:
+            while True:
+                chunk = await file_field.read_chunk()
+                if not chunk:
+                    break
+                f.write(chunk)
+                size += len(chunk)
+                
+        return web.json_response({
+            "success": True,
+            "message": "上传成功",
+            "file": {
+                "name": filename,
+                "path": os.path.join(target_dir if target_dir != "/" else "", filename),
+                "size": size
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"上传文件失败: {e}", exc_info=True)
+        return web.json_response({
+            "success": False,
+            "error": str(e)
+        }, status=500)
+
+@routes.post("/api/files/mkdir")
+async def mkdir_handler(request: web.Request):
+    """
+    API接口: 创建文件夹
+    JSON: {"path": "/foo/bar"}
+    """
+    try:
+        data = await request.json()
+        path_param = data.get("path")
+        
+        if not path_param:
+            return web.json_response({"success": False, "error": "缺少 path 参数"}, status=400)
+            
+        target_path = os.path.join("/", path_param.lstrip("/"))
+        
+        if os.path.exists(target_path):
+             return web.json_response({"success": False, "error": "目录已存在"}, status=400)
+             
+        os.makedirs(target_path, exist_ok=True)
+        
+        return web.json_response({
+            "success": True,
+            "message": f"目录 {path_param} 创建成功"
+        })
+        
+    except Exception as e:
+        logger.error(f"创建目录失败: {e}", exc_info=True)
+        return web.json_response({
+            "success": False,
+            "error": str(e)
+        }, status=500)
+
+@routes.delete("/api/files/delete")
+async def delete_file_handler(request: web.Request):
+    """
+    API接口: 删除文件或文件夹
+    参数: path
+    """
+    try:
+        path_param = request.query.get("path")
+        if not path_param:
+            return web.json_response({"success": False, "error": "缺少 path 参数"}, status=400)
+            
+        target_path = os.path.join("/", path_param.lstrip("/"))
+        
+        if not os.path.exists(target_path):
+            return web.json_response({"success": False, "error": "文件或目录不存在"}, status=404)
+        
+        # 安全检查: 防止删除根目录
+        if target_path == "/":
+             return web.json_response({"success": False, "error": "不能删除根目录"}, status=403)
+
+        if os.path.isdir(target_path):
+            shutil.rmtree(target_path)
+        else:
+            os.remove(target_path)
+            
+        return web.json_response({
+            "success": True,
+            "message": f"已删除 {path_param}"
+        })
+        
+    except Exception as e:
+        logger.error(f"删除失败: {e}", exc_info=True)
+        return web.json_response({
+            "success": False,
+            "error": str(e)
+        }, status=500)
+
+
+# ======================== 日志管理 API ========================
+
+@routes.get("/api/logs", allow_head=True)
+async def get_logs_handler(request: web.Request):
+    """
+    API接口: 获取日志内容
+    参数:
+        file: 日志文件名（可选，默认当前日志）
+        tail: 返回最后 N 行（默认 200）
+        level: 按级别过滤（如 ERROR, WARNING, INFO）
+        keyword: 关键词搜索
+    """
+    try:
+        from log_config import read_log_lines
+        filename = request.query.get("file")
+        tail = int(request.query.get("tail", 200))
+        level_filter = request.query.get("level")
+        keyword = request.query.get("keyword")
+
+        lines = read_log_lines(
+            filename=filename,
+            tail=tail,
+            level_filter=level_filter,
+            keyword=keyword,
+        )
+        return web.json_response({
+            "success": True,
+            "total": len(lines),
+            "lines": lines,
+        })
+    except Exception as e:
+        logger.error(f"获取日志失败: {e}", exc_info=True)
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+@routes.get("/api/logs/files", allow_head=True)
+async def get_log_files_handler(request: web.Request):
+    """API接口: 列出所有日志文件"""
+    try:
+        from log_config import get_log_files
+        files = get_log_files()
+        return web.json_response({"success": True, "files": files})
+    except Exception as e:
+        logger.error(f"获取日志文件列表失败: {e}", exc_info=True)
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+@routes.get("/api/logs/download/{filename}")
+async def download_log_file_handler(request: web.Request):
+    """API接口: 下载指定日志文件"""
+    try:
+        from log_config import LOG_DIR
+        filename = request.match_info["filename"]
+        safe_name = os.path.basename(filename)
+        path = os.path.join(LOG_DIR, safe_name)
+
+        if not os.path.isfile(path):
+            return web.json_response({"success": False, "error": "文件不存在"}, status=404)
+
+        return web.FileResponse(
+            path,
+            headers={
+                "Content-Disposition": f'attachment; filename="{safe_name}"'
+            },
+        )
+    except Exception as e:
+        logger.error(f"下载日志文件失败: {e}", exc_info=True)
+        return web.json_response({"success": False, "error": str(e)}, status=500)

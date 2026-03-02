@@ -62,7 +62,7 @@ class WebSocketManager:
                     else:
                         disconnected.add(ws)
                 except Exception as e:
-                    logger.error(f"发送 WebSocket 消息失败: {e}")
+                    logger.error(f"发送 WebSocket 消息失败: {e}", exc_info=True)
                     disconnected.add(ws)
             
             # 清理已断开的连接

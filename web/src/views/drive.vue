@@ -242,6 +242,8 @@
           v-if="showPreview && previewType === 'video'"
           :src="previewUrl" 
           :type="getVideoType(previewItem?.name)"
+          :remote="currentRemote"
+          :path="previewItem?.path"
         />
       </div>
     </el-dialog>

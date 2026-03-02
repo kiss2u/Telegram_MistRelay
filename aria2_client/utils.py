@@ -1,9 +1,12 @@
 """
 Aria2客户端工具函数
 """
+import logging
 import os
 import re
 
+
+logger = logging.getLogger(__name__)
 
 def format_progress_bar(percentage_str):
     """
@@ -26,7 +29,7 @@ def format_progress_bar(percentage_str):
         
         bar = filled_char * filled_length + empty_char * (bar_length - filled_length)
         return bar
-    except:
+    except Exception:
         return '░' * 20
 
 
@@ -265,7 +268,7 @@ def parse_rclone_progress(line):
                     break
                 
     except Exception as e:
-        print(f"解析 rclone 进度失败: {e}, 行内容: {line[:100]}")
+        logger.error(f"解析 rclone 进度失败: {e}, 行内容: {line[:100]}", exc_info=True)
     
     return result
 
@@ -284,7 +287,7 @@ def verify_file_size(file_path, expected_size, tolerance=1024):
     """
     try:
         if not os.path.exists(file_path):
-            print(f"[校验] 文件不存在: {file_path}")
+            logger.info(f"[校验] 文件不存在: {file_path}")
             return False
         
         actual_size = os.path.getsize(file_path)
@@ -294,14 +297,14 @@ def verify_file_size(file_path, expected_size, tolerance=1024):
             return True
         else:
             from util import byte2_readable
-            print(f"[校验] 文件大小不匹配:")
-            print(f"  文件: {os.path.basename(file_path)}")
-            print(f"  期望: {byte2_readable(expected_size)}")
-            print(f"  实际: {byte2_readable(actual_size)}")
-            print(f"  差异: {byte2_readable(size_diff)}")
+            logger.info(f"[校验] 文件大小不匹配:")
+            logger.info(f"  文件: {os.path.basename(file_path)}")
+            logger.info(f"  期望: {byte2_readable(expected_size)}")
+            logger.info(f"  实际: {byte2_readable(actual_size)}")
+            logger.info(f"  差异: {byte2_readable(size_diff)}")
             return False
     except Exception as e:
-        print(f"[校验] 校验文件大小时出错: {e}")
+        logger.error(f"[校验] 校验文件大小时出错: {e}", exc_info=True)
         return False
 
 
@@ -336,15 +339,15 @@ async def run_rclone_command_async(args, timeout=30):
             stderr_str = stderr.decode('utf-8', errors='replace') if stderr else ""
             return returncode, stdout_str, stderr_str
         except asyncio.TimeoutError:
-            print(f"[rclone] 命令超时: {' '.join(args)}")
+            logger.info(f"[rclone] 命令超时: {' '.join(args)}")
             try:
                 process.kill()
                 await process.wait()
-            except:
+            except Exception:
                 pass
             return -1, "", "命令执行超时"
     except Exception as e:
-        print(f"[rclone] 命令执行出错: {e}")
+        logger.error(f"[rclone] 命令执行出错: {e}", exc_info=True)
         return -1, "", str(e)
 
 
@@ -371,10 +374,10 @@ def run_rclone_command(args, timeout=30):
         )
         return result.returncode, result.stdout, result.stderr
     except subprocess.TimeoutExpired:
-        print(f"[rclone] 命令超时: {' '.join(args)}")
+        logger.info(f"[rclone] 命令超时: {' '.join(args)}")
         return -1, "", "命令执行超时"
     except Exception as e:
-        print(f"[rclone] 执行命令失败: {e}")
+        logger.error(f"[rclone] 执行命令失败: {e}", exc_info=True)
         return -1, "", str(e)
 
 
@@ -393,7 +396,7 @@ def calculate_file_md5(file_path, chunk_size=8192):
     
     try:
         if not os.path.exists(file_path):
-            print(f"[MD5] 文件不存在: {file_path}")
+            logger.info(f"[MD5] 文件不存在: {file_path}")
             return None
         
         md5_hash = hashlib.md5()
@@ -407,11 +410,9 @@ def calculate_file_md5(file_path, chunk_size=8192):
                 md5_hash.update(chunk)
         
         result = md5_hash.hexdigest()
-        print(f"[MD5] 计算完成: {os.path.basename(file_path)} = {result}")
+        logger.info(f"[MD5] 计算完成: {os.path.basename(file_path)} = {result}")
         return result
         
     except Exception as e:
-        print(f"[MD5] 计算MD5失败: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.exception(f"[MD5] 计算MD5失败: {e}")
         return None

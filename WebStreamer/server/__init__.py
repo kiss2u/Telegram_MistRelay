@@ -5,7 +5,7 @@
 
 import logging
 from aiohttp import web
-from aiohttp.http_exceptions import BadStatusLine
+from aiohttp.http_exceptions import BadStatusLine, BadHttpMessage
 from .stream_routes import routes
 
 logger = logging.getLogger("server")
@@ -38,7 +38,7 @@ async def error_handler_middleware(request, handler):
         if request.method == "CONNECT":
             return web.Response(status=404, text="Not Found")
         return await handler(request)
-    except (BadStatusLine, ConnectionResetError, OSError) as e:
+    except (BadStatusLine, BadHttpMessage, ConnectionResetError, OSError) as e:
         # 检查是否是 TLS 握手请求（常见的安全扫描）
         error_str = str(e)
         if "Invalid method" in error_str or "BadStatusLine" in error_str:

@@ -35,7 +35,7 @@ def extract_flood_wait_seconds(error: Exception) -> int:
         match = re.search(r'(\d+)\s*second', error_str, re.IGNORECASE)
         if match:
             return int(match.group(1))
-    except:
+    except Exception:
         pass
     return 300
 

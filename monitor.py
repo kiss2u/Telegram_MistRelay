@@ -53,7 +53,7 @@ class SystemMonitor:
                 time.sleep(self.interval)
                 self._collect_metrics()
             except Exception as e:
-                log.error(f"Error collecting metrics: {e}")
+                log.error(f"Error collecting metrics: {e}", exc_info=True)
 
     def _collect_metrics(self):
         current_time = time.time()

@@ -1,6 +1,7 @@
 """
 Aria2上传处理模块 - 处理OneDrive和Telegram上传
 """
+import logging
 import asyncio
 import functools
 import os
@@ -29,6 +30,8 @@ from .constants import (
 from .utils import parse_rclone_progress, format_upload_message, run_rclone_command
 
 
+
+logger = logging.getLogger(__name__)
 
 class UploadHandler:
     """处理文件上传到OneDrive和Telegram"""
@@ -62,18 +65,18 @@ class UploadHandler:
         
         try:
             # 1. 检查文件是否存在
-            print(f"[校验] 检查远程文件: {remote_file}")
+            logger.info(f"[校验] 检查远程文件: {remote_file}")
             from .utils import run_rclone_command_async
             returncode, stdout, stderr = await run_rclone_command_async(['lsf', remote_file], timeout=30)
             
             if returncode != 0:
                 error_msg = f"远程文件不存在或无法访问"
-                print(f"[校验] {error_msg}")
-                print(f"[校验] stderr: {stderr}")
+                logger.info(f"[校验] {error_msg}")
+                logger.info(f"[校验] stderr: {stderr}")
                 return False, error_msg
             
             # 2. 获取远程文件大小
-            print(f"[校验] 获取远程文件大小")
+            logger.info(f"[校验] 获取远程文件大小")
             returncode, stdout, stderr = run_rclone_command(
                 ['lsf', '--format', 's', remote_file], 
                 timeout=30
@@ -81,21 +84,21 @@ class UploadHandler:
             
             if returncode != 0:
                 error_msg = f"无法获取远程文件大小"
-                print(f"[校验] {error_msg}")
-                print(f"[校验] stderr: {stderr}")
+                logger.info(f"[校验] {error_msg}")
+                logger.info(f"[校验] stderr: {stderr}")
                 return False, error_msg
             
             try:
                 remote_size = int(stdout.strip())
             except ValueError:
                 error_msg = f"远程文件大小格式错误: {stdout}"
-                print(f"[校验] {error_msg}")
+                logger.info(f"[校验] {error_msg}")
                 return False, error_msg
             
             # 3. 对比本地和远程文件大小
             if not os.path.exists(file_path):
                 error_msg = f"本地文件不存在(可能已被删除)"
-                print(f"[校验] {error_msg}")
+                logger.info(f"[校验] {error_msg}")
                 # 如果本地文件已删除但远程文件存在,认为上传成功
                 return True, "本地文件已删除,但远程文件存在"
             
@@ -103,22 +106,22 @@ class UploadHandler:
             
             if remote_size != local_size:
                 error_msg = f"文件大小不匹配: 本地{byte2_readable(local_size)}, 远程{byte2_readable(remote_size)}"
-                print(f"[校验] {error_msg}")
+                logger.info(f"[校验] {error_msg}")
                 return False, error_msg
             
-            print(f"[校验] 文件大小匹配: {byte2_readable(remote_size)}")
+            logger.info(f"[校验] 文件大小匹配: {byte2_readable(remote_size)}")
             
             # 4. MD5哈希校验(可选,提供更强的完整性保证)
             try:
                 from .utils import calculate_file_md5
                 
                 # 计算本地文件MD5
-                print(f"[校验] 计算本地文件MD5...")
+                logger.info(f"[校验] 计算本地文件MD5...")
                 local_md5 = calculate_file_md5(file_path)
                 
                 if local_md5:
                     # 获取远程文件MD5
-                    print(f"[校验] 获取远程文件MD5...")
+                    logger.info(f"[校验] 获取远程文件MD5...")
                     returncode, stdout, stderr = await run_rclone_command_async(
                         ['md5sum', remote_file],
                         timeout=60  # MD5计算可能需要更长时间
@@ -130,34 +133,32 @@ class UploadHandler:
                         
                         if local_md5 != remote_md5:
                             error_msg = f"MD5不匹配: 本地{local_md5}, 远程{remote_md5}"
-                            print(f"[校验] {error_msg}")
+                            logger.info(f"[校验] {error_msg}")
                             return False, error_msg
                         
-                        print(f"[校验] MD5匹配: {local_md5}")
+                        logger.info(f"[校验] MD5匹配: {local_md5}")
                         success_msg = f"校验成功(大小+MD5): {byte2_readable(remote_size)}"
-                        print(f"[校验] {success_msg}")
+                        logger.info(f"[校验] {success_msg}")
                         return True, success_msg
                     else:
                         # 如果无法获取远程MD5,仅依赖大小校验
-                        print(f"[校验] 无法获取远程MD5,仅使用大小校验")
-                        print(f"[校验] stderr: {stderr}")
+                        logger.info(f"[校验] 无法获取远程MD5,仅使用大小校验")
+                        logger.info(f"[校验] stderr: {stderr}")
                 else:
-                    print(f"[校验] 无法计算本地MD5,仅使用大小校验")
+                    logger.info(f"[校验] 无法计算本地MD5,仅使用大小校验")
                     
             except Exception as md5_error:
                 # MD5校验失败不影响整体校验,降级为仅大小校验
-                print(f"[校验] MD5校验出错(降级为大小校验): {md5_error}")
+                logger.error(f"[校验] MD5校验出错(降级为大小校验): {md5_error}")
             
             # 校验成功(仅大小)
             success_msg = f"校验成功(大小): {byte2_readable(remote_size)}"
-            print(f"[校验] {success_msg}")
+            logger.info(f"[校验] {success_msg}")
             return True, success_msg
             
         except Exception as e:
             error_msg = f"校验过程出错: {str(e)}"
-            print(f"[校验] {error_msg}")
-            import traceback
-            traceback.print_exc()
+            logger.exception(f"[校验] {error_msg}")
             return False, error_msg
 
     async def upload_to_google_drive(self, file_path, msg=None, gid=None, upload_id=None):
@@ -214,20 +215,20 @@ class UploadHandler:
                             pass
                     mark_upload_started(upload_id, total_size=file_size_bytes if file_size_bytes > 0 else None)
                 except Exception as e:
-                    print(f"标记上传开始失败: {e}")
+                    logger.error(f"标记上传开始失败: {e}")
             
             if not os.path.exists(file_path):
-                print(f"文件不存在: {file_path}")
+                logger.info(f"文件不存在: {file_path}")
                 
                 # 记录失败
                 if upload_id:
                     try:
                         mark_upload_failed(upload_id, 'file_not_found', f"文件不存在: {file_path}")
                     except Exception as e:
-                        print(f"记录上传失败出错: {e}")
+                        logger.error(f"记录上传失败出错: {e}")
                 
                 # 静默处理：不再发送Telegram消息，错误信息已通过数据库记录
-                print(f"文件不存在，无法上传到 OneDrive: {file_name}")
+                logger.info(f"文件不存在，无法上传到 OneDrive: {file_name}")
                 return False
                 
             # 构建rclone命令（动态获取配置）
@@ -260,7 +261,7 @@ class UploadHandler:
                     if os.path.exists(file_path):
                         file_size_bytes = os.path.getsize(file_path)
                         file_size = byte2_readable(file_size_bytes)
-                except:
+                except Exception:
                     pass
                 
                 # 静默处理：不再发送Telegram消息，上传开始状态通过WebSocket推送
@@ -277,22 +278,22 @@ class UploadHandler:
             while current_retry < max_retries:
                 if current_retry > 0:
                     wait_seconds = current_retry * RCLONE_RETRY_BASE_DELAY + RCLONE_RETRY_EXTRA_DELAY  # 15s, 25s, ...
-                    print(f"[重试] 第 {current_retry} 次重试，等待 {wait_seconds} 秒...")
+                    logger.info(f"[重试] 第 {current_retry} 次重试，等待 {wait_seconds} 秒...")
                     
                     # 更新状态为重试中
                     if upload_id:
                         try:
                             increment_upload_retry(upload_id)
-                            print(f"[重试] 已更新数据库重试计数: {current_retry}")
+                            logger.info(f"[重试] 已更新数据库重试计数: {current_retry}")
                         except Exception as retry_err:
-                            print(f"[重试] 警告: 更新数据库重试计数失败: {retry_err}")
+                            logger.error(f"[重试] 警告: 更新数据库重试计数失败: {retry_err}")
                     
                     if self.bot and msg:
                          try:
                              retry_msg = f"{upload_start_text}\n\n⚠️ <b>上传失败，等待 {wait_seconds} 秒后重试 ({current_retry}/{max_retries-1})...</b>"
                              await self.bot.edit_message(msg, retry_msg, parse_mode='html')
                          except Exception as msg_err:
-                             print(f"[重试] 更新重试消息失败: {msg_err}")
+                             logger.error(f"[重试] 更新重试消息失败: {msg_err}")
                     
                     await asyncio.sleep(wait_seconds)
                     
@@ -323,7 +324,7 @@ class UploadHandler:
                                 try:
                                     update_upload_status(upload_id, 'uploading', total_size=file_size_bytes)
                                 except Exception as size_err:
-                                    print(f"[上传] 设置文件大小失败: {size_err}")
+                                    logger.error(f"[上传] 设置文件大小失败: {size_err}")
                         except Exception:
                             pass
                     
@@ -335,7 +336,7 @@ class UploadHandler:
                         
                         try:
                             line = line_bytes.decode('utf-8', errors='replace')
-                        except:
+                        except Exception:
                             line = line_bytes.decode('latin-1', errors='replace')
                         
                         # 收集错误日志
@@ -404,7 +405,7 @@ class UploadHandler:
                                             update_upload_status(upload_id, 'uploading', **update_kwargs)
                                             last_update_time = current_time
                                     except Exception as db_err:
-                                        print(f"[上传] 更新数据库进度失败: {db_err}")
+                                        logger.error(f"[上传] 更新数据库进度失败: {db_err}")
                                 
                                 # 静默处理：不再发送Telegram消息，上传进度通过WebSocket推送
                                 # WebSocket推送已在 update_upload_status 中实现
@@ -422,7 +423,7 @@ class UploadHandler:
                         result_msg = f"Rclone 退出码: {last_return_code}"
                         if error_lines:
                             result_msg += f", 错误: {error_lines[-1]}"
-                        print(f"上传尝试 {current_retry + 1} 失败: {result_msg}")
+                        logger.error(f"上传尝试 {current_retry + 1} 失败: {result_msg}")
                         current_retry += 1
                 finally:
                     # 确保进程被正确清理,防止僵尸进程
@@ -435,18 +436,19 @@ class UploadHandler:
                             except asyncio.TimeoutError:
                                 process.kill()
                                 await process.wait()
-                        except:
+                        except Exception as e:
+                            logger.warning(f"操作失败(已忽略): {e}")
                             try:
                                 process.kill()
                                 await process.wait()
-                            except:
+                            except Exception:
                                 pass
             
             # 循环结束，检查最终结果
             if upload_success:
                 # 校验上传
                 service_name = "Google Drive" if use_google_drive else "OneDrive"
-                print(f"[上传] rclone返回成功,开始校验远程文件...")
+                logger.info(f"[上传] rclone返回成功,开始校验远程文件...")
                 
                 # 校验失败时的重试机制
                 max_verify_retries = 2  # 最多重试2次(总共3次尝试)
@@ -456,7 +458,7 @@ class UploadHandler:
                 
                 while verify_retry_count <= max_verify_retries:
                     if verify_retry_count > 0:
-                        print(f"[校验] 第 {verify_retry_count} 次重试校验...")
+                        logger.info(f"[校验] 第 {verify_retry_count} 次重试校验...")
                         
                         # 静默处理：不再发送Telegram消息，校验重试信息通过WebSocket推送
                         
@@ -470,24 +472,24 @@ class UploadHandler:
                                 rclone_remote = get_config_value('RCLONE_REMOTE', 'onedrive')
                                 rclone_path = get_config_value('RCLONE_PATH', '/Downloads')
                                 remote_file = f"{rclone_remote}:{rclone_path}/{file_name}"
-                            print(f"[重试] 删除远程文件: {remote_file}")
+                            logger.info(f"[重试] 删除远程文件: {remote_file}")
                             from .utils import run_rclone_command_async
                             returncode, stdout, stderr = await run_rclone_command_async(
                                 ['deletefile', remote_file],
                                 timeout=30
                             )
                             if returncode == 0:
-                                print(f"[重试] 远程文件已删除")
+                                logger.info(f"[重试] 远程文件已删除")
                             else:
-                                print(f"[重试] 删除远程文件失败(可能不存在): {stderr}")
+                                logger.error(f"[重试] 删除远程文件失败(可能不存在): {stderr}")
                         except Exception as del_e:
-                            print(f"[重试] 删除远程文件出错: {del_e}")
+                            logger.error(f"[重试] 删除远程文件出错: {del_e}")
                         
                         # 等待一段时间再重试
                         await asyncio.sleep(5)
                         
                         # 重新上传（动态获取配置）
-                        print(f"[重试] 开始重新上传...")
+                        logger.info(f"[重试] 开始重新上传...")
                         if use_google_drive:
                             gdrive_remote = get_config_value('GOOGLE_DRIVE_REMOTE', 'gdrive')
                             gdrive_path = get_config_value('GOOGLE_DRIVE_PATH', '/Downloads')
@@ -520,15 +522,15 @@ class UploadHandler:
                             returncode = await process.wait()
                             
                             if returncode != 0:
-                                print(f"[重试] 重新上传失败,返回码: {process.returncode}")
+                                logger.error(f"[重试] 重新上传失败,返回码: {process.returncode}")
                                 verify_retry_count += 1
                                 verify_msg = f"重新上传失败,返回码: {process.returncode}"
                                 continue
                             
-                            print(f"[重试] 重新上传完成")
+                            logger.info(f"[重试] 重新上传完成")
                             
                         except Exception as upload_e:
-                            print(f"[重试] 重新上传出错: {upload_e}")
+                            logger.error(f"[重试] 重新上传出错: {upload_e}")
                             verify_retry_count += 1
                             verify_msg = f"重新上传出错: {upload_e}"
                             continue
@@ -549,15 +551,15 @@ class UploadHandler:
                     )
                     
                     if verify_success:
-                        print(f"[校验] 校验成功: {verify_msg}")
+                        logger.info(f"[校验] 校验成功: {verify_msg}")
                         break
                     else:
-                        print(f"[校验] 校验失败: {verify_msg}")
+                        logger.error(f"[校验] 校验失败: {verify_msg}")
                         verify_retry_count += 1
                 
                 # 检查最终校验结果
                 if not verify_success:
-                    print(f"[上传] OneDrive校验失败(已重试{verify_retry_count}次): {verify_msg}")
+                    logger.error(f"[上传] OneDrive校验失败(已重试{verify_retry_count}次): {verify_msg}")
                     upload_success = False
                     last_error_details = f"校验失败(重试{verify_retry_count}次): {verify_msg}"
                     
@@ -566,12 +568,12 @@ class UploadHandler:
                         try:
                             mark_upload_failed(upload_id, 'verification_failed', f"{verify_msg} (重试{verify_retry_count}次)")
                         except Exception as e:
-                            print(f"标记校验失败出错: {e}")
+                            logger.error(f"标记校验失败出错: {e}")
                     
                                         # 静默处理：不再发送Telegram消息，校验失败信息已通过数据库记录
-                    print(f"上传校验失败: {file_name}, 校验结果: {verify_msg}, 重试次数: {verify_retry_count}")
+                    logger.error(f"上传校验失败: {file_name}, 校验结果: {verify_msg}, 重试次数: {verify_retry_count}")
                 else:
-                    print(f"[上传] OneDrive校验成功: {verify_msg}")
+                    logger.info(f"[上传] OneDrive校验成功: {verify_msg}")
 
             
             # 最终上传成功(包含校验通过)
@@ -590,7 +592,7 @@ class UploadHandler:
                             full_remote_path = f"{rclone_remote}:{rclone_path}/{file_name}"
                         mark_upload_completed(upload_id, remote_path=full_remote_path)
                     except Exception as e:
-                        print(f"标记上传完成出错: {e}")
+                        logger.error(f"标记上传完成出错: {e}")
 
                         
                 # 静默处理：不再发送Telegram消息，上传完成状态通过WebSocket推送
@@ -608,25 +610,25 @@ class UploadHandler:
                                     'status': 'uploaded',
                                     'completed_at': asyncio_module.get_event_loop().time()
                                 }
-                                print(f"任务 {gid} 已标记为已上传")
+                                logger.info(f"任务 {gid} 已标记为已上传")
                     except Exception as e:
-                        print(f"更新任务上传状态失败: {e}")
+                        logger.error(f"更新任务上传状态失败: {e}")
                 
                 # 上传成功后删除本地文件（动态获取配置）
                 auto_delete = get_config_value('AUTO_DELETE_AFTER_UPLOAD', True)
                 if auto_delete:
                     try:
                         os.unlink(file_path)
-                        print(f"已删除本地文件: {file_path}")
+                        logger.info(f"已删除本地文件: {file_path}")
                         
                         # 更新数据库中的清理状态
                         if upload_id:
                             try:
                                 from db import mark_upload_cleaned
                                 mark_upload_cleaned(upload_id)
-                                print(f"已更新上传记录 {upload_id} 的清理状态")
+                                logger.info(f"已更新上传记录 {upload_id} 的清理状态")
                             except Exception as e:
-                                print(f"更新数据库清理状态失败: {e}")
+                                logger.error(f"更新数据库清理状态失败: {e}")
                         
                         # 更新任务完成跟踪状态为 'cleaned'
                         if gid:
@@ -640,19 +642,19 @@ class UploadHandler:
                                             'status': 'cleaned',
                                             'completed_at': asyncio_module.get_event_loop().time()
                                         }
-                                        print(f"任务 {gid} 已标记为已清理")
+                                        logger.info(f"任务 {gid} 已标记为已清理")
                             except Exception as e:
-                                print(f"更新任务清理状态失败: {e}")
+                                logger.error(f"更新任务清理状态失败: {e}")
                         
                         # 删除本地文件成功后，删除消息
                         if self.bot and msg:
                             try:
                                 await msg.delete()
-                                print(f"已删除消息（文件已上传并清理）: {file_name}")
+                                logger.info(f"已删除消息（文件已上传并清理）: {file_name}")
                             except Exception as e:
-                                print(f"删除消息失败: {e}")
+                                logger.error(f"删除消息失败: {e}")
                     except Exception as e:
-                        print(f"删除本地文件失败: {e}")
+                        logger.error(f"删除本地文件失败: {e}")
                         if self.bot and msg:
                             try:
                                 # 获取文件大小
@@ -661,7 +663,7 @@ class UploadHandler:
                                     if os.path.exists(file_path):
                                         file_size_bytes = os.path.getsize(file_path)
                                         file_size = byte2_readable(file_size_bytes)
-                                except:
+                                except Exception:
                                     pass
                                 
                                 error_message = (
@@ -672,15 +674,15 @@ class UploadHandler:
                                 if file_size:
                                     error_message += f'\n💾 <b>大小:</b> {file_size}'
                                 # 静默处理：不再发送Telegram消息，删除文件错误已记录到日志
-                                print(f"删除本地文件失败: {file_name}, 错误: {str(e)}")
+                                logger.error(f"删除本地文件失败: {file_name}, 错误: {str(e)}")
                             except Exception as edit_err:
-                                print(f"处理删除文件错误失败: {edit_err}")
+                                logger.error(f"处理删除文件错误失败: {edit_err}")
                 
                 return True
             else:
                 # 最终失败
                 error_message = f"上传失败，返回码: {last_return_code}"
-                print(error_message)
+                logger.info(error_message)
                 
                 # 使用收集到的错误日志
                 error_details = last_error_details
@@ -693,15 +695,15 @@ class UploadHandler:
                                 last_errors = [line for line in log_lines[-20:] if "ERROR" in line]
                                 if last_errors:
                                     error_details = "\n".join(last_errors)
-                                    print(f"rclone错误详情:\n{error_details}")
+                                    logger.error(f"rclone错误详情:\n{error_details}")
                     except Exception as e:
-                        print(f"读取日志文件失败: {e}")
+                        logger.error(f"读取日志文件失败: {e}")
                 
                 if upload_id:
                     try:
                         mark_upload_failed(upload_id, 'upload_failed', f"rclone返回码: {last_return_code}\n{error_details[:200]}")
                     except Exception as e:
-                        print(f"标记上传失败出错: {e}")
+                        logger.error(f"标记上传失败出错: {e}")
                 
                 if self.bot and msg:
                     try:
@@ -711,23 +713,24 @@ class UploadHandler:
                             if os.path.exists(file_path):
                                 file_size_bytes = os.path.getsize(file_path)
                                 file_size = byte2_readable(file_size_bytes)
-                        except:
+                        except Exception:
                             pass
                         
                         # 静默处理：不再发送Telegram消息，上传失败信息已通过数据库记录
                         # WebSocket推送已在 mark_upload_failed 中实现
-                        print(f"上传失败: {file_name}, 返回码: {last_return_code}, 错误: {error_details[:200] if error_details else '未知错误'}")
+                        logger.error(f"上传失败: {file_name}, 返回码: {last_return_code}, 错误: {error_details[:200] if error_details else '未知错误'}")
                     except Exception as e:
-                        print(f"处理上传失败信息失败: {e}")
+                        logger.error(f"处理上传失败信息失败: {e}")
                 
                 return False
                 
         except Exception as e:
-            print(f"上传到OneDrive时出错: {e}")
+            logger.error(f"上传到OneDrive时出错: {e}", exc_info=True)
             if upload_id:
                 try:
                     mark_upload_failed(upload_id, 'code_error', str(e), 'EXCEPTION')
-                except:
+                except Exception as e:
+                    logger.warning(f"操作失败(已忽略): {e}")
                     pass
 
             if self.bot:
@@ -737,12 +740,12 @@ class UploadHandler:
                     if os.path.exists(file_path):
                         file_size_bytes = os.path.getsize(file_path)
                         file_size = byte2_readable(file_size_bytes)
-                except:
+                except Exception:
                     pass
                 
                 # 静默处理：不再发送Telegram消息，错误信息已通过数据库记录
                 # WebSocket推送已在 mark_upload_failed 中实现
-                print(f"上传异常: {file_name}, 错误: {str(e)}")
+                logger.error(f"上传异常: {file_name}, 错误: {str(e)}")
             return False
         finally:
             # 释放上传并发控制信号量
@@ -781,7 +784,8 @@ class UploadHandler:
                             pass
                     # 在上传开始时设置 total_size
                     mark_upload_started(upload_id, total_size=file_size_bytes if file_size_bytes > 0 else None)
-                except:
+                except Exception as e:
+                    logger.warning(f"操作失败(已忽略): {e}")
                     pass
 
             client_index = None
@@ -820,12 +824,12 @@ class UploadHandler:
                 if client_index is not None and client_index in pyrogram_clients:
                     upload_client = pyrogram_clients[client_index]
                     upload_work_loads[client_index] = upload_work_loads.get(client_index, 0) + 1
-                    print(f"使用Pyrogram客户端 {client_index} 上传文件（上传负载: {upload_work_loads[client_index]}）")
+                    logger.info(f"使用Pyrogram客户端 {client_index} 上传文件（上传负载: {upload_work_loads[client_index]}）")
             
             # 如果没有Pyrogram客户端，使用Telethon bot
             if upload_client is None:
                 upload_client = self.bot
-                print("使用Telethon bot上传文件（未启用多客户端）")
+                logger.info("使用Telethon bot上传文件（未启用多客户端）")
             
             # 静默处理：不再发送Telegram消息，上传开始状态通过WebSocket推送
             # WebSocket推送已在 mark_upload_started 中实现
@@ -863,9 +867,9 @@ class UploadHandler:
                                         'status': 'uploaded',
                                         'completed_at': asyncio_module.get_event_loop().time()
                                     }
-                                    print(f"任务 {gid} 已标记为已上传（Telegram）")
+                                    logger.info(f"任务 {gid} 已标记为已上传（Telegram）")
                         except Exception as e:
-                            print(f"更新任务上传状态失败: {e}")
+                            logger.error(f"更新任务上传状态失败: {e}")
                     
                     # 图片上传后不需要清理（图片通常不删除），但如果启用了AUTO_DELETE_AFTER_UPLOAD，也需要清理（动态获取配置）
                     auto_delete = get_config_value('AUTO_DELETE_AFTER_UPLOAD', True)
@@ -878,9 +882,9 @@ class UploadHandler:
                                 try:
                                     from db import mark_upload_cleaned
                                     mark_upload_cleaned(upload_id)
-                                    print(f"已更新上传记录 {upload_id} 的清理状态（Telegram上传）")
+                                    logger.info(f"已更新上传记录 {upload_id} 的清理状态（Telegram上传）")
                                 except Exception as e:
-                                    print(f"更新数据库清理状态失败: {e}")
+                                    logger.error(f"更新数据库清理状态失败: {e}")
                             
                             # 更新任务完成跟踪状态为 'cleaned'（Telegram上传）
                             if gid:
@@ -894,11 +898,11 @@ class UploadHandler:
                                                 'status': 'cleaned',
                                                 'completed_at': asyncio_module.get_event_loop().time()
                                             }
-                                            print(f"任务 {gid} 已标记为已清理（Telegram上传）")
+                                            logger.info(f"任务 {gid} 已标记为已清理（Telegram上传）")
                                 except Exception as e:
-                                    print(f"更新任务清理状态失败: {e}")
+                                    logger.error(f"更新任务清理状态失败: {e}")
                         except Exception as e:
-                            print(f"删除图片文件失败: {e}")
+                            logger.error(f"删除图片文件失败: {e}")
                         
                 elif file_path.endswith(('.mp4', '.mkv', '.avi', '.mov')):
                     # 视频文件
@@ -942,9 +946,9 @@ class UploadHandler:
                                         'status': 'uploaded',
                                         'completed_at': asyncio_module.get_event_loop().time()
                                     }
-                                    print(f"任务 {gid} 已标记为已上传（Telegram）")
+                                    logger.info(f"任务 {gid} 已标记为已上传（Telegram）")
                         except Exception as e:
-                            print(f"更新任务上传状态失败: {e}")
+                            logger.error(f"更新任务上传状态失败: {e}")
                     
                     # 删除封面
                     if os.path.exists(thumb_path):
@@ -960,9 +964,9 @@ class UploadHandler:
                             try:
                                 from db import mark_upload_cleaned
                                 mark_upload_cleaned(upload_id)
-                                print(f"已更新上传记录 {upload_id} 的清理状态（Telegram上传-视频）")
+                                logger.info(f"已更新上传记录 {upload_id} 的清理状态（Telegram上传-视频）")
                             except Exception as e:
-                                print(f"更新数据库清理状态失败: {e}")
+                                logger.error(f"更新数据库清理状态失败: {e}")
                         
                         # 更新任务完成跟踪状态为 'cleaned'（Telegram上传）
                         if gid:
@@ -976,9 +980,9 @@ class UploadHandler:
                                             'status': 'cleaned',
                                             'completed_at': asyncio_module.get_event_loop().time()
                                         }
-                                        print(f"任务 {gid} 已标记为已清理（Telegram上传）")
+                                        logger.info(f"任务 {gid} 已标记为已清理（Telegram上传）")
                             except Exception as e:
-                                print(f"更新任务清理状态失败: {e}")
+                                logger.error(f"更新任务清理状态失败: {e}")
                 else:
                     # 其他文件类型（动态获取配置）
                     admin_id = get_config_value('ADMIN_ID', 0)
@@ -1009,9 +1013,9 @@ class UploadHandler:
                             try:
                                 from db import mark_upload_cleaned
                                 mark_upload_cleaned(upload_id)
-                                print(f"已更新上传记录 {upload_id} 的清理状态（Telegram上传-其他）")
+                                logger.info(f"已更新上传记录 {upload_id} 的清理状态（Telegram上传-其他）")
                             except Exception as e:
-                                print(f"更新数据库清理状态失败: {e}")
+                                logger.error(f"更新数据库清理状态失败: {e}")
                         
                         # 更新任务完成跟踪状态为 'cleaned'（Telegram上传）
                         if gid:
@@ -1025,9 +1029,9 @@ class UploadHandler:
                                             'status': 'cleaned',
                                             'completed_at': asyncio_module.get_event_loop().time()
                                         }
-                                        print(f"任务 {gid} 已标记为已清理（Telegram上传）")
+                                        logger.info(f"任务 {gid} 已标记为已清理（Telegram上传）")
                             except Exception as e:
-                                print(f"更新任务清理状态失败: {e}")
+                                logger.error(f"更新任务清理状态失败: {e}")
                         
                     # 标记上传完成（如果上面的逻辑没有抛出异常）
                     if upload_id:
@@ -1037,7 +1041,8 @@ class UploadHandler:
                             # Telegram上传的远程路径可以设置为telegram标识
                             telegram_remote_path = f"telegram://{file_name}"
                             mark_upload_completed(upload_id, remote_path=telegram_remote_path)
-                        except:
+                        except Exception as e:
+                            logger.warning(f"操作失败(已忽略): {e}")
                             pass
                             
             finally:
@@ -1046,9 +1051,7 @@ class UploadHandler:
                     upload_work_loads[client_index] = max(0, upload_work_loads[client_index] - 1)
                     
         except Exception as e:
-            print(f"上传到Telegram失败: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception(f"上传到Telegram失败: {e}")
             error_msg = (
                 f'❌ <b>上传失败</b>\n\n'
                 f'📂 <b>路径:</b> <code>{file_path}</code>\n\n'
@@ -1058,11 +1061,12 @@ class UploadHandler:
             if upload_id:
                 try:
                     mark_upload_failed(upload_id, 'code_error', str(e), 'EXCEPTION')
-                except:
+                except Exception as e:
+                    logger.warning(f"操作失败(已忽略): {e}")
                     pass
 
             # 静默处理：不再发送Telegram消息，错误信息已通过数据库记录
-            print(f"Telegram上传错误: {error_msg}")
+            logger.error(f"Telegram上传错误: {error_msg}")
             # 确保减少负载
             if client_index is not None and client_index in upload_work_loads:
                 upload_work_loads[client_index] = max(0, upload_work_loads[client_index] - 1)
@@ -1098,7 +1102,7 @@ class UploadHandler:
                     # 更新进度（注意：Telegram上传没有速度信息）
                     update_upload_status(upload_id, 'uploading', uploaded_size=current, total_size=total)
                     self._last_telegram_update_time[upload_id] = current_time
-            except:
+            except Exception:
                 pass
 
         if not msg or not path:

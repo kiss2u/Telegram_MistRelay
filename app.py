@@ -6,6 +6,10 @@ import re
 import shutil
 from typing import Any
 
+# 在所有其他模块之前初始化日志系统（控制台 + 文件双输出）
+from log_config import setup_logging
+setup_logging(level=logging.INFO)
+
 import python_socks
 
 from telethon import TelegramClient, events, Button
@@ -43,7 +47,7 @@ if ENABLE_STREAM:
         # 导入上传负载（从async_aria2_client模块）
         try:
             from async_aria2_client import upload_work_loads
-        except:
+        except Exception:
             upload_work_loads = {}
     except ImportError as e:
         log.warning(f"直链功能导入失败: {e}，将禁用直链功能")
@@ -66,7 +70,7 @@ if not (host == 'localhost' or host == '127.0.0.1' or all(c.isdigit() or c == '.
     host = 'localhost'
     port_path = ':'.join(url_parts[1:])
     docker_rpc_url = f"{host}:{port_path}"
-    print(f"在Docker环境中使用本地RPC URL: {docker_rpc_url}")
+    log.info(f"在Docker环境中使用本地RPC URL: {docker_rpc_url}")
 else:
     docker_rpc_url = RPC_URL
 
@@ -323,7 +327,7 @@ async def remove_all(event):
     for task in tasks:
         await client.remove_download_result(task['gid'])
     result = await client.get_global_option()
-    print('清空目录 ', result['dir'])
+    log.info(f"清空目录: {result['dir']}")
     shutil.rmtree(result['dir'], ignore_errors=True)
     msg = await event.respond('任务已清空,所有文件已删除', parse_mode='html')
     await auto_delete_message(msg)
@@ -559,11 +563,11 @@ async def show_message_queue(event):
                             status = await client.tell_status(gid)
                             if status.get('status') == 'complete':
                                 completed_count += 1
-                        except:
+                        except Exception:
                             pass
                     if completed_count > 0:
                         msg += f"  • 已完成: {completed_count}/{len(task_gids)}\n"
-                except:
+                except Exception:
                     pass
             
             msg += "\n"
@@ -798,27 +802,31 @@ async def main():
                     # 配置 aiohttp 日志记录器，将协议级错误降级为 DEBUG
                     aiohttp_logger = logging.getLogger('aiohttp.server')
                     
-                    # 创建自定义过滤器来过滤 BadStatusLine 错误
-                    class BadStatusLineFilter(logging.Filter):
+                    # 创建自定义过滤器来过滤协议级错误（BadStatusLine / BadHttpMessage / PRI 等）
+                    class BadRequestFilter(logging.Filter):
+                        _NOISE_KEYWORDS = (
+                            'BadStatusLine', 'BadHttpMessage', 'Invalid method',
+                            'PRI', 'Pause on PRI',
+                        )
+                        _NOISE_EXC_TYPES = ('BadStatusLine', 'BadHttpMessage')
+
                         def filter(self, record):
                             msg = str(record.getMessage())
-                            if 'BadStatusLine' in msg or 'Invalid method' in msg:
-                                if r'\x16\x03\x01' in msg or 'b\'\\x16\\x03\\x01\'' in msg:
-                                    record.levelno = logging.DEBUG
-                                    record.levelname = 'DEBUG'
-                                    return True
+                            if any(kw in msg for kw in self._NOISE_KEYWORDS):
+                                record.levelno = logging.DEBUG
+                                record.levelname = 'DEBUG'
+                                return True
                             if hasattr(record, 'exc_info') and record.exc_info:
-                                exc_type, exc_value, _ = record.exc_info
+                                exc_type = record.exc_info[0]
                                 if exc_type:
-                                    exc_type_name = exc_type.__name__ if hasattr(exc_type, '__name__') else str(exc_type)
-                                    if 'BadStatusLine' in exc_type_name:
+                                    name = getattr(exc_type, '__name__', str(exc_type))
+                                    if any(t in name for t in self._NOISE_EXC_TYPES):
                                         record.levelno = logging.DEBUG
                                         record.levelname = 'DEBUG'
                                         return True
                             return True
                     
-                    bad_status_filter = BadStatusLineFilter()
-                    aiohttp_logger.addFilter(bad_status_filter)
+                    aiohttp_logger.addFilter(BadRequestFilter())
                     
                     # 在启动Web服务器之前，先设置aria2客户端（确保路由可以访问）
                     try:

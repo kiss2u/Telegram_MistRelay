@@ -72,8 +72,9 @@ def get_config_value(key, default=None):
     try:
         from db import get_config as db_get_config
         return db_get_config(key, default)
-    except:
+    except Exception as e:
         # 如果数据库读取失败，使用缓存
+        print(f"[CONFIG] 警告: 动态读取配置 {key} 失败，回退到缓存: {e}")
         if _config_cache is None:
             _load_config()
         return _config_cache.get(key, default) if _config_cache else default

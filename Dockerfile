@@ -125,7 +125,7 @@ WORKDIR /app
 
 # Copy the rest of the application files
 # 前端已通过多阶段构建集成到镜像中
-COPY app.py async_aria2_client.py configer.py db.py util.py monitor.py requirements.txt start.sh ./
+COPY app.py async_aria2_client.py configer.py db.py util.py monitor.py log_config.py requirements.txt start.sh ./
 COPY rclone_vfs_manager.py thumbnail_generator.py ./
 COPY aria2_client/ ./aria2_client/
 COPY WebStreamer/ ./WebStreamer/

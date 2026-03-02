@@ -1,6 +1,7 @@
 """
 Aria2 WebSocket客户端核心模块
 """
+import logging
 import asyncio
 import base64
 import json
@@ -15,6 +16,8 @@ from configer import get_config_value
 from .download_handler import DownloadHandler
 from .upload_handler import UploadHandler
 
+
+logger = logging.getLogger(__name__)
 
 class AsyncAria2Client:
     """Aria2异步WebSocket客户端"""
@@ -71,15 +74,15 @@ class AsyncAria2Client:
             # 重新构建完整URL
             full_ws_url = f"{ws_protocol}://{host_port}/{path}"
             
-            print(f"连接到aria2 WebSocket: {full_ws_url}")
+            logger.info(f"连接到aria2 WebSocket: {full_ws_url}")
             self.websocket = await websockets.connect(full_ws_url, ping_interval=30)
-            print("WebSocket连接成功")
+            logger.info("WebSocket连接成功")
             asyncio.ensure_future(self.listen())
             
             # 启动轮询任务
             await self.start_polling()
         except Exception as e:
-            print(f"WebSocket连接失败: {e}")
+            logger.error(f"WebSocket连接失败: {e}", exc_info=True)
             await self.re_connect()
 
     async def listen(self):
@@ -89,7 +92,7 @@ class AsyncAria2Client:
                 result = json.loads(message)
                 if 'id' in result and result['id'] is None:
                     continue
-                print(f'rec message:{message}')
+                logger.info(f'rec message:{message}')
                 if 'error' in result:
                     err_msg = result['error']['message']
                     err_code = result['error']['code']
@@ -104,7 +107,7 @@ class AsyncAria2Client:
                     elif method_name == 'aria2.onDownloadPause':
                         await self.download_handler.on_download_pause(result, self.tell_status)
         except websockets.exceptions.ConnectionClosedError:
-            print("WebSocket连接已关闭")
+            logger.info("WebSocket连接已关闭")
             # 停止轮询
             await self.stop_polling()
             await self.re_connect()
@@ -140,7 +143,7 @@ class AsyncAria2Client:
             params.append(options)
 
         rpc_body = self.get_rpc_body('aria2.addUri', params)
-        print(rpc_body)
+        logger.info(rpc_body)
         result = await self.post_body(rpc_body)
         
         return result
@@ -216,8 +219,7 @@ class AsyncAria2Client:
         
         # 重新构建完整URL
         full_url = f"http://{host_port}/{path}"
-        
-        print(f"连接到aria2 RPC: {full_url}")
+
         async with aiohttp.ClientSession() as session:
             async with session.post(full_url, json=rpc_body) as response:
                 return await response.json()
@@ -225,11 +227,11 @@ class AsyncAria2Client:
     async def re_connect(self):
         """重新连接到WebSocket服务器"""
         if self.reconnect:
-            print("等待5秒后尝试重新连接...")
+            logger.info("等待5秒后尝试重新连接...")
             await asyncio.sleep(5)
             await self.connect()
         else:
-            print("已禁用重新连接功能")
+            logger.info("已禁用重新连接功能")
 
     async def tell_stopped(self, offset: int, num: int):
         """获取已停止的任务列表"""
@@ -260,14 +262,14 @@ class AsyncAria2Client:
         """暂停任务"""
         params = [gid]
         jsonreq = self.parse_json_to_str('aria2.pause', params)
-        print(jsonreq)
+        logger.info(jsonreq)
         await self.websocket.send(jsonreq)
 
     async def unpause(self, gid: str):
         """恢复任务"""
         params = [gid]
         jsonreq = self.parse_json_to_str('aria2.unpause', params)
-        print(jsonreq)
+        logger.info(jsonreq)
         await self.websocket.send(jsonreq)
 
     async def remove(self, gid: str):
@@ -281,7 +283,7 @@ class AsyncAria2Client:
         """移除下载结果"""
         params = [gid]
         jsonreq = self.parse_json_to_str('aria2.removeDownloadResult', params)
-        print(jsonreq)
+        logger.info(jsonreq)
         await self.websocket.send(jsonreq)
 
     async def change_global_option(self, params):
@@ -298,12 +300,12 @@ class AsyncAria2Client:
     async def start_polling(self):
         """启动轮询任务"""
         if self.is_polling:
-            print("[轮询] 轮询任务已在运行")
+            logger.info("[轮询] 轮询任务已在运行")
             return
         
         self.is_polling = True
         self.polling_task = asyncio.create_task(self.poll_active_downloads())
-        print("[轮询] 已启动轮询任务")
+        logger.info("[轮询] 已启动轮询任务")
     
     async def stop_polling(self):
         """停止轮询任务"""
@@ -315,7 +317,7 @@ class AsyncAria2Client:
             except asyncio.CancelledError:
                 pass
             self.polling_task = None
-        print("[轮询] 已停止轮询任务")
+        logger.info("[轮询] 已停止轮询任务")
     
     async def poll_active_downloads(self):
         """
@@ -324,7 +326,7 @@ class AsyncAria2Client:
         """
         from .constants import POLL_INTERVAL, IDLE_CHECK_INTERVAL
         
-        print("[轮询] 开始轮询循环")
+        logger.info("[轮询] 开始轮询循环")
         
         while self.is_polling:
             try:
@@ -340,8 +342,6 @@ class AsyncAria2Client:
                 total_tasks = len(active_tasks) + len(stopped_tasks) + len(waiting_tasks)
                 
                 if total_tasks > 0:
-                    print(f"[轮询] 发现任务 - 活动: {len(active_tasks)}, 已停止: {len(stopped_tasks)}, 等待: {len(waiting_tasks)}")
-                    
                     # 遍历活动任务
                     for task in active_tasks:
                         gid = task.get('gid')
@@ -368,21 +368,18 @@ class AsyncAria2Client:
                     # 有任务时使用正常轮询间隔
                     await asyncio.sleep(POLL_INTERVAL)
                 else:
-                    print("[轮询] 无任务,使用空闲检查间隔")
                     # 无任务时使用较长的检查间隔
                     await asyncio.sleep(IDLE_CHECK_INTERVAL)
                     
             except asyncio.CancelledError:
-                print("[轮询] 轮询任务被取消")
+                logger.info("[轮询] 轮询任务被取消")
                 break
             except Exception as e:
-                print(f"[轮询] 轮询过程出错: {e}")
-                import traceback
-                traceback.print_exc()
+                logger.exception(f"[轮询] 轮询过程出错: {e}")
                 # 出错后等待一段时间再继续
                 await asyncio.sleep(POLL_INTERVAL)
         
-        print("[轮询] 轮询循环结束")
+        logger.info("[轮询] 轮询循环结束")
     
     async def sync_download_status(self, gid: str, aria2_status: dict):
         """
@@ -402,7 +399,7 @@ class AsyncAria2Client:
                 # 已处理过,跳过
                 return
             
-            print(f"[同步] 任务 {gid[:8]}... 状态: {status}")
+            logger.info(f"[同步] 任务 {gid[:8]}... 状态: {status}")
             
             # 获取数据库中的当前状态
             download_id = get_download_id_by_gid(gid)
@@ -417,12 +414,12 @@ class AsyncAria2Client:
                 # 任务正在下载
                 # 如果数据库状态是 paused，说明任务从暂停恢复
                 if db_status == 'paused':
-                    print(f"[同步] 检测到任务 {gid[:8]}... 从暂停恢复,更新状态")
+                    logger.info(f"[同步] 检测到任务 {gid[:8]}... 从暂停恢复,更新状态")
                     mark_download_resumed(gid)
                 
                 # 检查是否有对应的消息对象,如果没有说明可能错过了开始事件
                 if gid not in self.download_messages:
-                    print(f"[同步] 检测到活动任务 {gid[:8]}... 但无消息记录,触发开始事件")
+                    logger.info(f"[同步] 检测到活动任务 {gid[:8]}... 但无消息记录,触发开始事件")
                     # 构造事件结构并触发开始处理
                     event = {
                         'method': 'aria2.onDownloadStart',
@@ -435,11 +432,11 @@ class AsyncAria2Client:
                 # 任务等待中
                 # 如果数据库状态是 paused，说明任务从暂停恢复
                 if db_status == 'paused':
-                    print(f"[同步] 检测到任务 {gid[:8]}... 从暂停恢复(等待中),更新状态")
+                    logger.info(f"[同步] 检测到任务 {gid[:8]}... 从暂停恢复(等待中),更新状态")
                     mark_download_resumed(gid)
                 
                 if gid not in self.download_messages:
-                    print(f"[同步] 检测到等待任务 {gid[:8]}...,触发开始事件")
+                    logger.info(f"[同步] 检测到等待任务 {gid[:8]}...,触发开始事件")
                     event = {
                         'method': 'aria2.onDownloadStart',
                         'params': [{'gid': gid}]
@@ -450,12 +447,12 @@ class AsyncAria2Client:
                 # 任务已暂停
                 # 如果数据库状态不是 paused，更新数据库状态
                 if db_status != 'paused':
-                    print(f"[同步] ⏸️ 检测到任务 {gid[:8]}... 已暂停,更新数据库状态")
+                    logger.info(f"[同步] ⏸️ 检测到任务 {gid[:8]}... 已暂停,更新数据库状态")
                     mark_download_paused(gid)
                 
             elif status == 'complete':
                 # 任务已完成
-                print(f"[同步] ✅ 检测到任务 {gid[:8]}... 已完成,触发完成事件")
+                logger.info(f"[同步] ✅ 检测到任务 {gid[:8]}... 已完成,触发完成事件")
                 event = {
                     'method': 'aria2.onDownloadComplete',
                     'params': [{'gid': gid}]
@@ -465,7 +462,7 @@ class AsyncAria2Client:
             elif status == 'error':
                 # 任务出错
                 error_msg = aria2_status.get('errorMessage', 'Unknown error')
-                print(f"[同步] ❌ 检测到任务 {gid[:8]}... 出错: {error_msg},触发错误事件")
+                logger.error(f"[同步] ❌ 检测到任务 {gid[:8]}... 出错: {error_msg},触发错误事件")
                 event = {
                     'method': 'aria2.onDownloadError',
                     'params': [{'gid': gid}]
@@ -474,10 +471,8 @@ class AsyncAria2Client:
                 
             elif status == 'removed':
                 # 任务被移除
-                print(f"[同步] 🗑️ 任务 {gid[:8]}... 已被移除")
+                logger.info(f"[同步] 🗑️ 任务 {gid[:8]}... 已被移除")
                 # 不触发事件,只记录
                 
         except Exception as e:
-            print(f"[同步] 同步任务 {gid[:8]}... 状态时出错: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception(f"[同步] 同步任务 {gid[:8]}... 状态时出错: {e}")

@@ -128,7 +128,7 @@ async def wait_for_download_slot(max_wait_time=60):
             # 等待后重试
             await asyncio.sleep(check_interval)
         except Exception as e:
-            logger.error(f"检查aria2任务状态失败: {e}")
+            logger.error(f"检查aria2任务状态失败: {e}", exc_info=True)
             # 如果检查失败，等待一下再继续
             await asyncio.sleep(1.0)
             # 如果检查失败，假设有空闲位置，继续尝试

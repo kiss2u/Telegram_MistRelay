@@ -61,7 +61,7 @@ class RcloneVFSManager:
             )
             return result.returncode == 0
         except Exception as e:
-            logger.error(f"检查挂载状态失败: {e}")
+            logger.error(f"检查挂载状态失败: {e}", exc_info=True)
             return False
     
     def mount(self, remote_name: str, force: bool = False) -> bool:
@@ -94,8 +94,10 @@ class RcloneVFSManager:
                 f"{remote_name}:",
                 str(mount_point),
                 "--vfs-cache-mode", "full",
-                "--vfs-cache-max-age", "24h",
+                "--vfs-cache-max-age", "10m",
                 "--vfs-cache-max-size", "10G",
+                "--vfs-read-ahead", "20G",
+                f"--cache-dir", f"/app/cache/rclone/{remote_name}",
                 "--dir-cache-time", "5m",
                 "--allow-other",  # 允许其他用户访问
                 "--daemon",  # 后台运行

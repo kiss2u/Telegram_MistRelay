@@ -329,7 +329,7 @@ async def _process_message_item(queue_item, aria2_client):
                     try:
                         item = message_processing_queue.get_nowait()
                         temp_items.append(item)
-                    except:
+                    except Exception:
                         break
                 # 重新放回队列
                 for item in temp_items:
