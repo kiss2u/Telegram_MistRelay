@@ -1,4 +1,5 @@
 import os
+import time
 import logging
 import logging.handlers
 from datetime import datetime
@@ -10,7 +11,25 @@ LOG_FILE = os.path.join(LOG_DIR, 'mistrelay.log')
 MAX_BYTES = 10 * 1024 * 1024
 BACKUP_COUNT = 5
 
+# 日志保留时长：24 小时
+LOG_MAX_AGE_SECONDS = 24 * 3600
+
 _initialized = False
+
+
+def cleanup_old_logs():
+    """删除超过 24 小时的日志文件。"""
+    if not os.path.isdir(LOG_DIR):
+        return
+    now = time.time()
+    for name in os.listdir(LOG_DIR):
+        path = os.path.join(LOG_DIR, name)
+        if os.path.isfile(path) and name.startswith('mistrelay'):
+            if now - os.path.getmtime(path) > LOG_MAX_AGE_SECONDS:
+                try:
+                    os.remove(path)
+                except Exception:
+                    pass
 
 
 def setup_logging(level=logging.INFO):
@@ -25,6 +44,7 @@ def setup_logging(level=logging.INFO):
     _initialized = True
 
     os.makedirs(LOG_DIR, exist_ok=True)
+    cleanup_old_logs()
 
     file_formatter = logging.Formatter(
         fmt='%(asctime)s | %(levelname)-7s | %(name)s | %(message)s',

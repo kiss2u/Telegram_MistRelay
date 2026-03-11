@@ -349,7 +349,8 @@ export function getLogContent(params: {
 }
 
 export function getLogDownloadUrl(filename: string): string {
-  return `/api/logs/download/${encodeURIComponent(filename)}`
+  const token = localStorage.getItem('token') || ''
+  return `/api/logs/download/${encodeURIComponent(filename)}?token=${encodeURIComponent(token)}`
 }
 
 // ==================== 用户认证 API ====================

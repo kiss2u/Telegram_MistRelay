@@ -188,7 +188,7 @@ function toggleCollapse() {
 .sidebar-menu:deep(.el-menu-item):hover {
   @apply bg-gray-700/50;
   border-color: rgba(102, 126, 234, 0.3);
-  transform: translateX(4px);
+  padding-left: calc(var(--el-menu-base-level-padding) + 4px);
 }
 
 .sidebar-menu:deep(.el-menu-item):hover:before {

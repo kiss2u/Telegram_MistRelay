@@ -80,12 +80,16 @@ _AUTH_WHITELIST = frozenset({
     "/api/status",
 })
 
+_AUTH_WHITELIST_PREFIXES = (
+    "/api/rclone/thumbnail/serve/",
+)
+
 
 @web.middleware
 async def auth_middleware(request, handler):
     """JWT 认证中间件。保护所有 /api/ 路径（白名单除外）。"""
     path = request.path
-    if not path.startswith("/api/") or path in _AUTH_WHITELIST:
+    if not path.startswith("/api/") or path in _AUTH_WHITELIST or any(path.startswith(p) for p in _AUTH_WHITELIST_PREFIXES):
         return await handler(request)
 
     auth_header = request.headers.get("Authorization", "")

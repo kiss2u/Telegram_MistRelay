@@ -515,9 +515,10 @@ function handleRemoteChange() {
 function handleDownload(item: DriveItem) {
   if (item.isDir) return
   
+  const token = localStorage.getItem('token') || ''
   const protocol = window.location.protocol
   const host = window.location.host
-  const url = `${protocol}//${host}/api/rclone/file?remote=${currentRemote.value}&path=${encodeURIComponent(item.path)}&download=true`
+  const url = `${protocol}//${host}/api/rclone/file?remote=${currentRemote.value}&path=${encodeURIComponent(item.path)}&download=true&token=${encodeURIComponent(token)}`
   
   window.open(url, '_blank')
 }
@@ -570,17 +571,18 @@ function handleRowClick(row: DriveItem) {
     if (isImage(row.name)) {
       previewType.value = 'image'
       previewItem.value = row
-      // 构建预览URL
+      const token = localStorage.getItem('token') || ''
       const protocol = window.location.protocol
       const host = window.location.host
-      previewUrl.value = `${protocol}//${host}/api/rclone/file?remote=${currentRemote.value}&path=${encodeURIComponent(row.path)}`
+      previewUrl.value = `${protocol}//${host}/api/rclone/file?remote=${currentRemote.value}&path=${encodeURIComponent(row.path)}&token=${encodeURIComponent(token)}`
       showPreview.value = true
     } else if (isVideo(row.name)) {
       previewType.value = 'video'
       previewItem.value = row
+      const token = localStorage.getItem('token') || ''
       const protocol = window.location.protocol
       const host = window.location.host
-      previewUrl.value = `${protocol}//${host}/api/rclone/file?remote=${currentRemote.value}&path=${encodeURIComponent(row.path)}`
+      previewUrl.value = `${protocol}//${host}/api/rclone/file?remote=${currentRemote.value}&path=${encodeURIComponent(row.path)}&token=${encodeURIComponent(token)}`
       showPreview.value = true
     } else {
       ElMessage.info('暂不支持预览此类型文件')

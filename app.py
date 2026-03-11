@@ -7,7 +7,7 @@ import shutil
 from typing import Any
 
 # 在所有其他模块之前初始化日志系统（控制台 + 文件双输出）
-from log_config import setup_logging
+from log_config import setup_logging, cleanup_old_logs
 setup_logging(level=logging.INFO)
 
 import python_socks
@@ -539,42 +539,32 @@ async def show_message_queue(event):
         queue_status = await get_queue_status()
         
         msg = "📋 <b>消息队列状态</b>\n\n"
-        
-        # 当前正在处理的项目
-        if queue_status['current_processing']:
-            current = queue_status['current_processing']
-            msg += "🔄 <b>正在处理:</b>\n"
-            msg += f"  • 任务ID: <code>{current.get('message_id', 'N/A')}</code>\n"
-            msg += f"  • 标题: <code>{current.get('title', '未知')}</code>\n"
-            
-            if current.get('type') == 'media_group':
-                total = current.get('media_group_total', 0)
-                msg += f"  • 类型: 媒体组 ({total} 个文件)\n"
-            else:
-                msg += f"  • 类型: 单个文件\n"
-            
-            task_gids = current.get('task_gids', [])
-            if task_gids:
-                msg += f"  • 下载任务数: {len(task_gids)}\n"
-                # 显示任务状态
-                try:
-                    completed_count = 0
-                    for gid in task_gids:
-                        try:
-                            status = await client.tell_status(gid)
-                            if status.get('status') == 'complete':
-                                completed_count += 1
-                        except Exception:
-                            pass
-                    if completed_count > 0:
-                        msg += f"  • 已完成: {completed_count}/{len(task_gids)}\n"
-                except Exception:
-                    pass
-            
+
+        # 正在处理的项目（并发模式下可能有多个）
+        processing_items = queue_status.get('processing_items', [])
+        processing_count = queue_status.get('processing_count', 0)
+        # 兼容旧字段：如果没有 processing_items，用 current_processing 补充
+        if not processing_items and queue_status.get('current_processing'):
+            processing_items = [queue_status['current_processing']]
+            processing_count = 1
+
+        if processing_items:
+            msg += f"🔄 <b>正在处理 ({processing_count} 个):</b>\n"
+            for current in processing_items:
+                msg += f"  • 任务ID: <code>{current.get('message_id', 'N/A')}</code>\n"
+                msg += f"    标题: <code>{current.get('title', '未知')}</code>\n"
+                if current.get('type') == 'media_group':
+                    total = current.get('media_group_total', 0)
+                    msg += f"    类型: 媒体组 ({total} 个文件)\n"
+                else:
+                    msg += f"    类型: 单个文件\n"
+                task_gids = current.get('task_gids', [])
+                if task_gids:
+                    msg += f"    下载任务数: {len(task_gids)}\n"
             msg += "\n"
         else:
             msg += "🔄 <b>正在处理:</b> 无\n\n"
-        
+
         # 等待中的项目
         if queue_status['waiting_count'] > 0:
             msg += f"⏳ <b>等待中 ({queue_status['waiting_count']} 个):</b>\n"
@@ -587,9 +577,9 @@ async def show_message_queue(event):
             msg += "\n"
         else:
             msg += "⏳ <b>等待中:</b> 无\n\n"
-        
-        # 队列大小
-        msg += f"📊 <b>队列大小:</b> {queue_status['queue_size']}\n"
+
+        # 队列大小（显示实际排队数，不含已取出正在处理的）
+        msg += f"📊 <b>队列大小:</b> {queue_status['queue_size']}（处理中: {processing_count}，等待中: {queue_status['waiting_count']}）\n"
         
         response_msg = await event.respond(msg, parse_mode='html')
         await auto_delete_message(response_msg)
@@ -768,6 +758,14 @@ async def main():
         ensure_default_admin()
     except Exception as e:
         log.warning(f"初始化本地下载数据库失败: {e}")
+
+    # 启动日志定时清理任务（每小时检查一次，删除超过 24 小时的日志）
+    async def _log_cleanup_loop():
+        while True:
+            await asyncio.sleep(3600)
+            cleanup_old_logs()
+
+    asyncio.create_task(_log_cleanup_loop())
 
     await client.connect()
     bot.add_event_handler(BotCallbackHandler)

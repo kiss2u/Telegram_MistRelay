@@ -124,11 +124,21 @@ async def message_queue_processor():
             # 从队列中获取消息处理任务(这里会阻塞等待,直到有任务)
             # 队列项格式: (task_func, args, kwargs, queue_notification, queue_id)
             queue_item = await message_processing_queue.get()
-            
+
+            # 取出后立刻同步更新状态为"正在处理"，避免并发模式下状态延迟导致显示异常
+            _queue_id = queue_item[4] if len(queue_item) >= 5 else None
+            if _queue_id and queue_tracker_lock:
+                try:
+                    if _queue_id in queue_item_tracker:
+                        queue_item_tracker[_queue_id]['status'] = 'processing'
+                        current_processing_queue_id = _queue_id
+                except Exception:
+                    pass
+
             # 获取信号量，控制并发数（如果达到最大并发数，这里会等待）
             if message_concurrent_semaphore:
                 await message_concurrent_semaphore.acquire()
-            
+
             # 创建异步任务来处理消息（不阻塞队列处理器）
             async def process_single_message():
                 try:
@@ -139,7 +149,7 @@ async def message_queue_processor():
                         message_concurrent_semaphore.release()
                     # 标记任务完成
                     message_processing_queue.task_done()
-            
+
             # 在后台处理消息（不等待完成）
             loop = asyncio.get_event_loop()
             loop.create_task(process_single_message())
