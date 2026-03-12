@@ -19,13 +19,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Write signing key to file
+      - name: Set signing environment
         shell: bash
         env:
           SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |
-          printf '%s' "${SIGNING_KEY}" > "${RUNNER_TEMP}/tauri-signing.key"
-          echo "TAURI_SIGNING_PRIVATE_KEY_PATH=${RUNNER_TEMP}/tauri-signing.key" >> "${GITHUB_ENV}"
+          {
+            echo "TAURI_SIGNING_PRIVATE_KEY<<__SIGNING_EOF__"
+            echo "${SIGNING_KEY}"
+            echo "__SIGNING_EOF__"
+          } >> "${GITHUB_ENV}"
           echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=" >> "${GITHUB_ENV}"
 
       - name: Prepare release metadata
