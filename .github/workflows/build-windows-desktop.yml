@@ -14,8 +14,6 @@ jobs:
       contents: write
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-      SCCACHE_GHA_ENABLED: true
-      RUSTC_WRAPPER: sccache
 
     steps:
       - name: Checkout repository
@@ -66,9 +64,6 @@ jobs:
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.7
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
