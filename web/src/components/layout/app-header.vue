@@ -89,7 +89,6 @@ const breadcrumb = computed(() => {
     '/settings': '系统设置',
     '/system': '系统管理',
     '/drive': '网盘管理',
-    '/logs': '系统日志',
   }
   return routeMap[route.path]
 })

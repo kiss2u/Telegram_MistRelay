@@ -3,73 +3,116 @@
     <el-card shadow="hover">
       <template #header>
         <div class="drive-header">
-          <h2>我的网盘</h2>
+          <div>
+            <h2>我的网盘</h2>
+            <p class="drive-header-subtitle">浏览远程存储、查看容量并管理文件</p>
+          </div>
+
+          <div v-if="availableRemotes.length > 0" class="drive-header-tools">
+            <el-select
+              v-model="currentRemote"
+              @change="handleRemoteChange"
+              placeholder="选择云存储"
+              class="header-remote-select"
+              popper-class="drive-remote-popper"
+              fit-input-width
+            >
+              <el-option
+                v-for="remote in availableRemotes"
+                :key="remote.name"
+                :label="remote.name"
+                :value="remote.name"
+              >
+                <div class="remote-option">
+                  <div class="remote-option-head">
+                    <span class="remote-option-name">{{ remote.name }}</span>
+                    <el-tag size="small" effect="plain" round>{{ remote.type }}</el-tag>
+                  </div>
+                  <div class="remote-option-meta">
+                    <span>{{ getRemoteUsageSummary(remote.name) }}</span>
+                    <span v-if="getRemoteUsagePercent(remote.name) !== null" class="remote-option-percent">
+                      {{ getRemoteUsagePercent(remote.name)!.toFixed(0) }}%
+                    </span>
+                  </div>
+                </div>
+              </el-option>
+            </el-select>
+
+            <div v-if="currentRemote" class="header-usage">
+              <template v-if="loadingDriveUsage">
+                <span class="header-usage-text">容量读取中...</span>
+              </template>
+              <template v-else-if="driveUsage?.supported && driveUsage.data">
+                <span class="header-usage-name">{{ currentRemote }}</span>
+                <span class="header-usage-text">{{ formatBytes(driveUsage.data.used) }} / {{ formatBytes(driveUsage.data.total) }}</span>
+                <el-tag size="small" round :type="usagePercent >= 90 ? 'danger' : usagePercent >= 75 ? 'warning' : 'success'">
+                  {{ usagePercent.toFixed(1) }}%
+                </el-tag>
+              </template>
+              <template v-else>
+                <span class="header-usage-name">{{ currentRemote }}</span>
+                <span class="header-usage-text">{{ driveUsage?.error || '暂不支持容量统计' }}</span>
+              </template>
+
+              <el-button :icon="RefreshRight" circle size="small" @click="loadDriveUsage(true, true)" :loading="loadingDriveUsage" />
+            </div>
+          </div>
         </div>
       </template>
 
-      <!-- Remote 选择和路径导航 -->
-      <div class="drive-controls">
-        <el-select
-          v-model="currentRemote"
-          @change="handleRemoteChange"
-          placeholder="选择云存储"
-          style="width: 200px"
-        >
-          <el-option
-            v-for="remote in availableRemotes"
-            :key="remote.name"
-            :label="`${remote.name} (${remote.type})`"
-            :value="remote.name"
-          />
-        </el-select>
+      <div class="drive-topbar">
+        <div class="drive-controls">
+          <div class="drive-breadcrumb-card">
+            <el-breadcrumb separator="/">
+              <el-breadcrumb-item @click="navigateToPath('/')">
+                <el-icon><HomeFilled /></el-icon>
+                根目录
+              </el-breadcrumb-item>
+              <el-breadcrumb-item
+                v-for="(segment, index) in pathSegments"
+                :key="index"
+                @click="navigateToSegment(index)"
+              >
+                {{ segment }}
+              </el-breadcrumb-item>
+            </el-breadcrumb>
+          </div>
 
-        <el-breadcrumb separator="/" style="margin-left: 20px; flex: 1">
-          <el-breadcrumb-item @click="navigateToPath('/')">
-            <el-icon><HomeFilled /></el-icon>
-            根目录
-          </el-breadcrumb-item>
-          <el-breadcrumb-item
-            v-for="(segment, index) in pathSegments"
-            :key="index"
-            @click="navigateToSegment(index)"
-          >
-            {{ segment }}
-          </el-breadcrumb-item>
-        </el-breadcrumb>
+          <div class="drive-actions">
+            <el-button-group class="view-mode-toggle">
+              <el-button :type="viewMode === 'list' ? 'primary' : ''" @click="viewMode = 'list'">
+                <el-icon><List /></el-icon>
+              </el-button>
+              <el-button :type="viewMode === 'grid' ? 'primary' : ''" @click="viewMode = 'grid'">
+                <el-icon><Grid /></el-icon>
+              </el-button>
+            </el-button-group>
 
-        <el-button-group style="margin-right: 10px">
-          <el-button :type="viewMode === 'list' ? 'primary' : ''" @click="viewMode = 'list'">
-            <el-icon><List /></el-icon>
-          </el-button>
-          <el-button :type="viewMode === 'grid' ? 'primary' : ''" @click="viewMode = 'grid'">
-            <el-icon><Grid /></el-icon>
-          </el-button>
-        </el-button-group>
+            <el-select
+              v-model="currentSort"
+              placeholder="排序"
+              class="sort-select"
+            >
+              <template #prefix>
+                <el-icon><Sort /></el-icon>
+              </template>
+              <el-option
+                v-for="item in sortOptions"
+                :key="item.value"
+                :label="item.label"
+                :value="item.value"
+              />
+            </el-select>
 
-        <el-select 
-          v-model="currentSort" 
-          placeholder="排序" 
-          style="width: 140px; margin-right: 10px"
-        >
-           <template #prefix>
-            <el-icon><Sort /></el-icon>
-          </template>
-          <el-option
-            v-for="item in sortOptions"
-            :key="item.value"
-            :label="item.label"
-            :value="item.value"
-          />
-        </el-select>
-
-
-        <el-input
-          v-model="searchKeyword"
-          placeholder="搜索文件名"
-          clearable
-          style="width: 250px"
-          :prefix-icon="Search"
-        />
+            <el-input
+              v-model="searchKeyword"
+              placeholder="搜索文件名"
+              clearable
+              class="search-input"
+              :prefix-icon="Search"
+            />
+          </div>
+        </div>
       </div>
 
       <!-- 列表视图 -->
@@ -253,15 +296,21 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { HomeFilled, Document, Folder, Search, List, Grid, Picture, VideoPlay, Sort, Close, Download, Delete } from '@element-plus/icons-vue'
-import { getRcloneRemotes, browseDrive, getThumbnail, deleteFile, type RcloneRemote, type DriveItem } from '@/api'
+import { HomeFilled, Document, Folder, Search, List, Grid, Picture, VideoPlay, Sort, Download, Delete, RefreshRight } from '@element-plus/icons-vue'
+import { getRcloneRemotes, browseDrive, getThumbnail, deleteFile, getDriveUsage, type RcloneRemote, type DriveItem, type DriveUsageResponse } from '@/api'
 import VideoPlayer from '@/components/VideoPlayer.vue'
+
+interface RemoteUsageState {
+  response?: DriveUsageResponse
+  loading: boolean
+}
 
 const availableRemotes = ref<RcloneRemote[]>([])
 const currentRemote = ref('')
 const currentPath = ref('/')
 const items = ref<DriveItem[]>([])
 const loading = ref(false)
+const remoteUsageStates = ref<Record<string, RemoteUsageState>>({})
 
 // 搜索和分页
 const searchKeyword = ref('')
@@ -290,6 +339,31 @@ const currentSort = computed({
     sortBy.value = field as 'name' | 'time'
     sortDesc.value = order === 'desc'
   }
+})
+
+const currentRemoteInfo = computed(() => {
+  return availableRemotes.value.find(remote => remote.name === currentRemote.value) || null
+})
+
+const currentRemoteState = computed(() => {
+  if (!currentRemote.value) return null
+  return remoteUsageStates.value[currentRemote.value] || null
+})
+
+const driveUsage = computed(() => currentRemoteState.value?.response || null)
+const loadingDriveUsage = computed(() => currentRemoteState.value?.loading || false)
+
+const usagePercent = computed(() => {
+  const total = driveUsage.value?.data?.total
+  const used = driveUsage.value?.data?.used
+  if (!total || !used || total <= 0) return 0
+  return Math.min(100, Number(((used / total) * 100).toFixed(1)))
+})
+
+const usageProgressColor = computed(() => {
+  if (usagePercent.value >= 90) return '#ef4444'
+  if (usagePercent.value >= 75) return '#f59e0b'
+  return '#10b981'
 })
 
 // 计算属性
@@ -481,6 +555,91 @@ async function loadRemotes() {
   }
 }
 
+async function fetchRemoteUsage(remote: string, force = false, showError = false) {
+  if (!remote) return null
+
+  const currentState = remoteUsageStates.value[remote]
+  if (!force && currentState?.response) {
+    return currentState.response
+  }
+  if (currentState?.loading) {
+    return currentState.response || null
+  }
+
+  remoteUsageStates.value = {
+    ...remoteUsageStates.value,
+    [remote]: {
+      response: currentState?.response,
+      loading: true
+    }
+  }
+
+  try {
+    const response = await getDriveUsage(remote)
+    remoteUsageStates.value = {
+      ...remoteUsageStates.value,
+      [remote]: {
+        response,
+        loading: false
+      }
+    }
+    if (!response.success && showError) {
+      ElMessage.error(response.error || '获取网盘容量失败')
+    }
+    return response
+  } catch (err: any) {
+    console.error('加载网盘容量失败:', err)
+    const response: DriveUsageResponse = {
+      success: false,
+      supported: false,
+      remote,
+      error: err.message || '获取网盘容量失败'
+    }
+    remoteUsageStates.value = {
+      ...remoteUsageStates.value,
+      [remote]: {
+        response,
+        loading: false
+      }
+    }
+    if (showError) {
+      ElMessage.error(err.message || '获取网盘容量失败')
+    }
+    return response
+  }
+}
+
+async function preloadRemoteUsages() {
+  const tasks = availableRemotes.value.map(remote => fetchRemoteUsage(remote.name))
+  await Promise.allSettled(tasks)
+}
+
+async function loadDriveUsage(force = false, showError = false) {
+  if (!currentRemote.value) return
+  await fetchRemoteUsage(currentRemote.value, force, showError)
+}
+
+function getRemoteUsagePercent(remote: string): number | null {
+  const usage = remoteUsageStates.value[remote]?.response
+  const total = usage?.data?.total
+  const used = usage?.data?.used
+  if (!usage?.supported || !total || used === undefined || used === null || total <= 0) return null
+  return Math.min(100, (used / total) * 100)
+}
+
+function getRemoteUsageSummary(remote: string): string {
+  const state = remoteUsageStates.value[remote]
+  if (state?.loading) return '容量读取中...'
+  const usage = state?.response
+  if (!usage) return '等待加载容量'
+  if (!usage.success) return '容量读取失败'
+  if (!usage.supported || !usage.data) return '暂不支持容量统计'
+
+  const used = formatBytes(usage.data.used ?? 0)
+  const total = formatBytes(usage.data.total ?? 0)
+  return `${used} / ${total}`
+}
+
 // 浏览目录
 async function browse() {
   if (!currentRemote.value) return
@@ -508,6 +667,9 @@ async function browse() {
 // Remote 改变
 function handleRemoteChange() {
   currentPath.value = '/'
+  if (!remoteUsageStates.value[currentRemote.value]?.response) {
+    loadDriveUsage()
+  }
   browse()
 }
 
@@ -619,6 +781,11 @@ function formatBytes(bytes: number | undefined): string {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
 }
 
+function formatCount(value: number | undefined | null): string {
+  if (value === undefined || value === null) return '-'
+  return new Intl.NumberFormat('zh-CN').format(value)
+}
+
 // 格式化日期
 function formatDate(dateStr: string | undefined): string {
   if (!dateStr) return '-'
@@ -633,6 +800,7 @@ function formatDate(dateStr: string | undefined): string {
 onMounted(async () => {
   await loadRemotes()
   if (currentRemote.value) {
+    void preloadRemoteUsages()
     browse()
   }
 })
@@ -660,6 +828,8 @@ watch(paginatedItems, () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
 }
 
 .drive-header h2 {
@@ -668,10 +838,128 @@ watch(paginatedItems, () => {
   font-weight: 600;
 }
 
+.drive-header-subtitle {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: #64748b;
+}
+
+.drive-header-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.header-remote-select {
+  width: 220px;
+}
+
+.header-remote-select :deep(.el-select__wrapper) {
+  min-height: 38px;
+  border-radius: 10px;
+  background: #f8fafc;
+  box-shadow: none;
+  border: 1px solid #dbeafe;
+}
+
+.header-usage {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #f8fafc 0%, #eef6ff 100%);
+  border: 1px solid #dbeafe;
+}
+
+.header-usage-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.header-usage-text {
+  font-size: 12px;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.drive-topbar {
+  margin-bottom: 12px;
+}
+
 .drive-controls {
   display: flex;
   align-items: center;
-  margin-bottom: 20px;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+
+.drive-breadcrumb-card {
+  flex: 1;
+  min-width: 240px;
+}
+
+.drive-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.view-mode-toggle :deep(.el-button) {
+  border-radius: 10px;
+}
+
+.sort-select {
+  width: 152px;
+}
+
+.search-input {
+  width: 260px;
+}
+
+.remote-option {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 2px 0;
+}
+
+.remote-option-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.remote-option-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.remote-option-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 11px;
+  color: #64748b;
+}
+
+.remote-option-percent {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #dbeafe;
+  color: #1d4ed8;
+  font-weight: 600;
 }
 
 .file-name {
@@ -829,5 +1117,28 @@ watch(paginatedItems, () => {
   background: #000;
   border-radius: 4px;
   overflow: hidden;
+}
+
+:deep(.drive-remote-popper .el-select-dropdown__item) {
+  height: auto;
+  min-height: 52px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+  line-height: 1.4;
+}
+
+@media (max-width: 960px) {
+  .drive-actions {
+    width: 100%;
+  }
+
+  .header-remote-select {
+    width: 100%;
+  }
+
+  .sort-select,
+  .search-input {
+    width: 100%;
+  }
 }
 </style>

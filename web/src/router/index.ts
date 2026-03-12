@@ -45,8 +45,7 @@ const routes: RouteRecordRaw[] = [
   },
   {
     path: '/logs',
-    name: 'Logs',
-    component: () => import('@/views/logs.vue')
+    redirect: '/system?tab=app-logs'
   }
 ]
 

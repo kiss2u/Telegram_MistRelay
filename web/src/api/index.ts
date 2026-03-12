@@ -285,6 +285,29 @@ export function browseDrive(remote: string, path: string = '/'): Promise<DriveBr
   }).then(response => response.data)
 }
 
+export interface DriveUsageInfo {
+  total?: number | null
+  used?: number | null
+  free?: number | null
+  trashed?: number | null
+  other?: number | null
+  objects?: number | null
+}
+
+export interface DriveUsageResponse {
+  success: boolean
+  supported?: boolean
+  remote?: string
+  data?: DriveUsageInfo
+  error?: string
+}
+
+export function getDriveUsage(remote: string): Promise<DriveUsageResponse> {
+  return api.get<DriveUsageResponse>('/rclone/about', {
+    params: { remote }
+  }).then(response => response.data)
+}
+
 export interface ThumbnailResponse {
   success: boolean
   thumbnail_url?: string

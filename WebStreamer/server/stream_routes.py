@@ -1160,6 +1160,89 @@ async def get_rclone_remotes_handler(request: web.Request):
         }, status=500)
 
 
+@routes.get("/api/rclone/about", allow_head=True)
+async def get_rclone_about_handler(request: web.Request):
+    """获取 remote 容量信息"""
+    try:
+        remote = request.query.get('remote', '').strip()
+
+        if not remote:
+            return web.json_response({
+                "success": False,
+                "error": "remote 参数不能为空"
+            }, status=400)
+
+        cmd = ['rclone', 'about', f'{remote}:', '--json']
+        logger.info(f"执行 rclone about 命令: {' '.join(cmd)}")
+
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=20
+            )
+        except subprocess.TimeoutExpired:
+            logger.error("rclone about 命令超时")
+            return web.json_response({
+                "success": False,
+                "error": "获取网盘容量超时,请重试"
+            }, status=504)
+
+        if result.returncode != 0:
+            error_msg = result.stderr.strip() if result.stderr else "未知错误"
+            if re.search(r"unsupported|not supported|doesn'?t support|quota", error_msg, re.IGNORECASE):
+                return web.json_response({
+                    "success": True,
+                    "supported": False,
+                    "remote": remote,
+                    "error": error_msg
+                })
+
+            logger.error(f"rclone about 命令失败: {error_msg}")
+            return web.json_response({
+                "success": False,
+                "error": f"获取网盘容量失败: {error_msg}"
+            }, status=500)
+
+        try:
+            about = json.loads(result.stdout or '{}')
+        except json.JSONDecodeError as e:
+            logger.error(f"解析 rclone about 输出失败: {e}")
+            return web.json_response({
+                "success": False,
+                "error": "解析网盘容量信息失败"
+            }, status=500)
+
+        numeric_fields = ["total", "used", "free", "trashed", "other", "objects"]
+        data = {}
+        for field in numeric_fields:
+            value = about.get(field)
+            data[field] = value if isinstance(value, (int, float)) else None
+
+        if all(data[field] is None for field in ["total", "used", "free"]):
+            return web.json_response({
+                "success": True,
+                "supported": False,
+                "remote": remote,
+                "error": "当前网盘暂不支持容量统计"
+            })
+
+        return web.json_response({
+            "success": True,
+            "supported": True,
+            "remote": remote,
+            "data": data
+        })
+
+    except Exception as e:
+        logger.error(f"获取 Rclone 容量信息失败: {e}", exc_info=True)
+        return web.json_response({
+            "success": False,
+            "error": str(e)
+        }, status=500)
+
+
 @routes.get("/api/rclone/browse", allow_head=True)
 async def browse_drive_handler(request: web.Request):
     """浏览云盘文件和目录"""
