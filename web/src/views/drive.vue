@@ -1,5 +1,5 @@
 <template>
-  <div class="drive-page">
+  <div class="drive-page" v-loading="previewLoading">
     <el-card shadow="hover">
       <template #header>
         <div class="drive-header">
@@ -155,6 +155,7 @@
                 type="primary" 
                 link 
                 :icon="Download"
+                :loading="Boolean(downloadingPaths[row.path])"
                 @click.stop="handleDownload(row)"
               />
               <el-button 
@@ -231,6 +232,7 @@
                  circle 
                  size="small" 
                  :icon="Download"
+                 :loading="Boolean(downloadingPaths[item.path])"
                  @click.stop="handleDownload(item)"
                />
                <el-button 
@@ -281,8 +283,23 @@
       class="video-dialog"
     >
       <div class="video-container">
+        <div v-if="previewLoading" class="preview-loading-card">
+          <div class="preview-loading-title">正在准备本地播放</div>
+          <div class="preview-loading-subtitle">
+            桌面端会先缓存一段视频到本地，再切换到本地流播放。
+          </div>
+          <el-progress
+            :percentage="previewProgressPercent"
+            :indeterminate="!previewTransferStatus?.totalBytes"
+            :duration="2"
+            status="success"
+          />
+          <div class="preview-loading-meta">
+            {{ previewProgressText }}
+          </div>
+        </div>
         <VideoPlayer 
-          v-if="showPreview && previewType === 'video'"
+          v-else-if="showPreview && previewType === 'video' && previewUrl"
           :src="previewUrl" 
           :type="getVideoType(previewItem?.name)"
           :remote="currentRemote"
@@ -299,7 +316,15 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { HomeFilled, Document, Folder, Search, List, Grid, Picture, VideoPlay, Sort, Download, Delete, RefreshRight } from '@element-plus/icons-vue'
 import { getRcloneRemotes, browseDrive, getThumbnail, deleteFile, getDriveUsage, type RcloneRemote, type DriveItem, type DriveUsageResponse } from '@/api'
 import VideoPlayer from '@/components/VideoPlayer.vue'
-import { buildAuthorizedApiUrl } from '@/utils/runtime'
+import {
+  downloadDesktopFile,
+  getDesktopTransferStatus,
+  prepareDesktopPreviewFile,
+  startDesktopPreviewStream,
+  toDesktopAssetUrl,
+  type DesktopTransferStatus,
+} from '@/utils/desktop'
+import { buildAuthorizedApiUrl, isDesktopShell } from '@/utils/runtime'
 
 interface RemoteUsageState {
   response?: DriveUsageResponse
@@ -675,7 +700,7 @@ function handleRemoteChange() {
 }
 
 // 下载文件
-function handleDownload(item: DriveItem) {
+async function handleDownload(item: DriveItem) {
   if (item.isDir) return
   
   const url = buildAuthorizedApiUrl('/api/rclone/file', {
@@ -683,8 +708,34 @@ function handleDownload(item: DriveItem) {
     path: item.path,
     download: true,
   })
-  
-  window.open(url, '_blank')
+
+  if (!isDesktopShell()) {
+    window.open(url, '_blank')
+    return
+  }
+
+  downloadingPaths.value = {
+    ...downloadingPaths.value,
+    [item.path]: true
+  }
+
+  try {
+    const result = await downloadDesktopFile({
+      sourceUrl: url,
+      remote: currentRemote.value,
+      remotePath: item.path,
+      fileName: item.name,
+    })
+    ElMessage.success(`已下载到本地: ${result.localPath}`)
+  } catch (err: any) {
+    console.error('桌面端下载失败:', err)
+    ElMessage.error(err.message || '桌面端下载失败')
+  } finally {
+    downloadingPaths.value = {
+      ...downloadingPaths.value,
+      [item.path]: false
+    }
+  }
 }
 
 // 删除文件
@@ -724,9 +775,70 @@ const showPreview = ref(false)
 const previewItem = ref<DriveItem | null>(null)
 const previewType = ref<'image' | 'video' | 'unknown'>('unknown')
 const previewUrl = ref('')
+const previewLoading = ref(false)
+const downloadingPaths = ref<Record<string, boolean>>({})
+const previewTransferStatus = ref<DesktopTransferStatus | null>(null)
+let previewRequestToken = 0
+
+const previewProgressPercent = computed(() => {
+  if (!previewTransferStatus.value) return 0
+  return Math.min(100, Math.max(0, Number(previewTransferStatus.value.progressPercent || 0)))
+})
+
+const previewProgressText = computed(() => {
+  const status = previewTransferStatus.value
+  if (!status) return '正在准备本地播放缓存...'
+  if (status.totalBytes && status.totalBytes > 0) {
+    return `已缓存 ${formatBytes(status.downloadedBytes)} / ${formatBytes(status.totalBytes)}`
+  }
+  return `已缓存 ${formatBytes(status.downloadedBytes)}`
+})
+
+async function preparePreviewSource(row: DriveItem): Promise<string> {
+  const sourceUrl = buildAuthorizedApiUrl('/api/rclone/file', {
+    remote: currentRemote.value,
+    path: row.path,
+  })
+
+  if (!isDesktopShell()) {
+    return sourceUrl
+  }
+
+  const result = await prepareDesktopPreviewFile({
+    sourceUrl,
+    remote: currentRemote.value,
+    remotePath: row.path,
+    fileName: row.name,
+  })
+
+  return toDesktopAssetUrl(result.localPath)
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => window.setTimeout(resolve, ms))
+}
+
+async function waitForPreviewReady(transferId: string, token: number): Promise<void> {
+  while (token === previewRequestToken && showPreview.value) {
+    const status = await getDesktopTransferStatus(transferId)
+    previewTransferStatus.value = status
+
+    if (status.state === 'error') {
+      throw new Error(status.error || '本地播放缓存失败')
+    }
+
+    if (status.readyForPreview) {
+      return
+    }
+
+    await sleep(350)
+  }
+
+  throw new Error('预览已取消')
+}
 
 // 点击行
-function handleRowClick(row: DriveItem) {
+async function handleRowClick(row: DriveItem) {
   if (row.isDir) {
     // 进入目录
     navigateToPath(row.path)
@@ -735,19 +847,63 @@ function handleRowClick(row: DriveItem) {
     if (isImage(row.name)) {
       previewType.value = 'image'
       previewItem.value = row
-      previewUrl.value = buildAuthorizedApiUrl('/api/rclone/file', {
-        remote: currentRemote.value,
-        path: row.path,
-      })
-      showPreview.value = true
+      previewLoading.value = true
+      try {
+        previewUrl.value = await preparePreviewSource(row)
+        showPreview.value = true
+      } catch (err: any) {
+        console.error('准备图片预览失败:', err)
+        ElMessage.error(err.message || '准备图片预览失败')
+        closePreview()
+      } finally {
+        previewLoading.value = false
+      }
     } else if (isVideo(row.name)) {
       previewType.value = 'video'
       previewItem.value = row
-      previewUrl.value = buildAuthorizedApiUrl('/api/rclone/file', {
-        remote: currentRemote.value,
-        path: row.path,
-      })
+      previewUrl.value = ''
+      previewTransferStatus.value = null
       showPreview.value = true
+      previewLoading.value = true
+      const token = ++previewRequestToken
+      try {
+        if (isDesktopShell()) {
+          const sourceUrl = buildAuthorizedApiUrl('/api/rclone/file', {
+            remote: currentRemote.value,
+            path: row.path,
+          })
+          const session = await startDesktopPreviewStream({
+            sourceUrl,
+            remote: currentRemote.value,
+            remotePath: row.path,
+            fileName: row.name,
+          })
+
+          if (token !== previewRequestToken || !showPreview.value) {
+            return
+          }
+
+          await waitForPreviewReady(session.transferId, token)
+
+          if (token !== previewRequestToken || !showPreview.value) {
+            return
+          }
+
+          previewUrl.value = session.streamUrl
+        } else {
+          previewUrl.value = await preparePreviewSource(row)
+        }
+      } catch (err: any) {
+        if (err?.message !== '预览已取消') {
+          console.error('准备视频预览失败:', err)
+          ElMessage.error(err.message || '准备视频预览失败')
+        }
+        closePreview()
+      } finally {
+        if (token === previewRequestToken) {
+          previewLoading.value = false
+        }
+      }
     } else {
       ElMessage.info('暂不支持预览此类型文件')
     }
@@ -756,10 +912,13 @@ function handleRowClick(row: DriveItem) {
 
 // 关闭预览
 function closePreview() {
+  previewRequestToken += 1
   showPreview.value = false
   previewItem.value = null
   previewUrl.value = ''
   previewType.value = 'unknown'
+  previewLoading.value = false
+  previewTransferStatus.value = null
 }
 
 // 导航到路径
@@ -1116,9 +1275,37 @@ watch(paginatedItems, () => {
   display: flex;
   justify-content: center;
   align-items: center;
+  min-height: 420px;
   background: #000;
   border-radius: 4px;
   overflow: hidden;
+}
+
+.preview-loading-card {
+  width: min(560px, 100%);
+  padding: 28px;
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.96), rgba(30, 41, 59, 0.92));
+  color: #e2e8f0;
+}
+
+.preview-loading-title {
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.preview-loading-subtitle {
+  margin-top: 8px;
+  margin-bottom: 20px;
+  color: #94a3b8;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.preview-loading-meta {
+  margin-top: 12px;
+  color: #cbd5e1;
+  font-size: 13px;
 }
 
 :deep(.drive-remote-popper .el-select-dropdown__item) {
