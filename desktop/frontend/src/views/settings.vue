@@ -1,70 +1,90 @@
 <template>
   <div class="settings-page">
     <div class="page-header">
-      <el-button type="info" @click="handleReloadConfig" :loading="reloading" :disabled="reloading">
-        从config.yml重新导入配置
-      </el-button>
-      <div style="margin-left: 10px; color: #909399; font-size: 12px;">
-        提示：配置保存后会自动从数据库读取，无需手动重载
+      <div class="page-copy">
+        <div class="page-title">设置中心</div>
+        <div class="page-subtitle">
+          {{ scopeDescription }}
+        </div>
       </div>
+      <el-radio-group v-model="settingsScope" size="large" class="scope-switch">
+        <el-radio-button label="client">客户端设置</el-radio-button>
+        <el-radio-button label="server">服务端设置</el-radio-button>
+      </el-radio-group>
     </div>
 
-    <el-tabs v-model="activeTab" type="border-card">
-      <el-tab-pane label="客户端连接" name="client">
-        <el-card shadow="hover">
-          <template #header>
-            <div class="card-header">
-              <span>客户端连接配置</span>
-              <div class="card-actions">
-                <el-button @click="testConnection" :loading="testingConnection">
-                  测试连接
-                </el-button>
-                <el-button type="primary" @click="saveClientConnection" :loading="savingClientConnection">
-                  保存并应用
-                </el-button>
-              </div>
-            </div>
-          </template>
+    <el-card shadow="never" class="scope-summary">
+      <div class="scope-summary__header">
+        <div>
+          <div class="scope-summary__title">{{ scopeTitle }}</div>
+          <div class="scope-summary__desc">{{ scopeSummary }}</div>
+        </div>
+        <el-tag :type="settingsScope === 'client' ? 'success' : 'warning'" size="large">
+          {{ settingsScope === 'client' ? '仅当前客户端生效' : '保存到服务器' }}
+        </el-tag>
+      </div>
+    </el-card>
 
-          <el-alert
-            title="桌面端只负责展示 UI，所有逻辑仍运行在服务器。"
-            type="info"
-            :closable="false"
-            style="margin-bottom: 20px"
-          />
+    <div v-if="settingsScope === 'client'" class="scope-panel">
+      <el-alert
+        title="这些设置只保存在当前桌面客户端，用于连接、更新和代理控制，不会修改服务器配置。"
+        type="info"
+        :closable="false"
+      />
 
-          <el-form label-width="180px">
-            <el-form-item label="客户端类型">
-              <el-tag type="success">桌面客户端</el-tag>
-            </el-form-item>
-            <el-form-item label="服务器地址">
-              <el-input
-                v-model="clientServerUrl"
-                placeholder="https://mistrelay.example.com"
-                clearable
-              />
-              <div class="el-form-item__help">
-                桌面端必须填写；浏览器端留空时继续使用当前同源服务。
+      <el-tabs v-model="activeClientTab" type="border-card">
+        <el-tab-pane label="连接" name="connection">
+          <el-card shadow="hover">
+            <template #header>
+              <div class="card-header">
+                <span>客户端连接配置</span>
+                <div class="card-actions">
+                  <el-button @click="testConnection" :loading="testingConnection">
+                    测试连接
+                  </el-button>
+                  <el-button type="primary" @click="saveClientConnection" :loading="savingClientConnection">
+                    保存并应用
+                  </el-button>
+                </div>
               </div>
-            </el-form-item>
-            <el-form-item label="当前生效地址">
-              <el-input :model-value="effectiveServerUrlLabel" readonly />
-            </el-form-item>
-            <el-form-item label="连接状态">
-              <div class="connection-status">
-                <el-tag :type="connectionStatusTagType">
-                  {{ connectionStatusLabel }}
-                </el-tag>
-                <span v-if="connectionStatusText" class="connection-status-text">
-                  {{ connectionStatusText }}
-                </span>
-              </div>
-            </el-form-item>
-            <el-divider content-position="left">软件更新</el-divider>
-              <el-form-item label="当前版本">
-                <el-tag type="info">v{{ appVersion }}</el-tag>
+            </template>
+
+            <el-form label-width="180px">
+              <el-form-item label="客户端类型">
+                <el-tag type="success">桌面客户端</el-tag>
               </el-form-item>
-              <el-form-item label="检查更新">
+              <el-form-item label="服务器地址">
+                <el-input
+                  v-model="clientServerUrl"
+                  placeholder="https://mistrelay.example.com"
+                  clearable
+                />
+                <div class="el-form-item__help">
+                  这里只配置桌面端要连接的服务端地址，不影响服务器本身的运行参数。
+                </div>
+              </el-form-item>
+              <el-form-item label="当前生效地址">
+                <el-input :model-value="effectiveServerUrlLabel" readonly />
+              </el-form-item>
+              <el-form-item label="连接状态">
+                <div class="connection-status">
+                  <el-tag :type="connectionStatusTagType">
+                    {{ connectionStatusLabel }}
+                  </el-tag>
+                  <span v-if="connectionStatusText" class="connection-status-text">
+                    {{ connectionStatusText }}
+                  </span>
+                </div>
+              </el-form-item>
+            </el-form>
+          </el-card>
+        </el-tab-pane>
+
+        <el-tab-pane label="更新" name="update">
+          <el-card shadow="hover">
+            <template #header>
+              <div class="card-header">
+                <span>客户端更新</span>
                 <div class="card-actions">
                   <el-button @click="handleCheckUpdate" :loading="checkingUpdate" :disabled="installingUpdate">
                     检查更新
@@ -78,6 +98,22 @@
                     更新到 v{{ updateVersion }}
                   </el-button>
                 </div>
+              </div>
+            </template>
+
+            <el-alert
+              title="这里只管理本地客户端版本。服务器升级、镜像更新和后台发布流程不受这里影响。"
+              type="success"
+              :closable="false"
+              style="margin-bottom: 20px"
+            />
+
+            <el-form label-width="180px">
+              <el-form-item label="当前版本">
+                <div class="version-row">
+                  <el-tag type="info">v{{ appVersion }}</el-tag>
+                  <span class="connection-status-text">当前安装在这台电脑上的客户端版本</span>
+                </div>
               </el-form-item>
               <el-form-item v-if="updateStatusText" label="更新状态">
                 <div class="connection-status">
@@ -88,14 +124,40 @@
               <el-form-item v-if="installingUpdate && updateProgressPercent >= 0" label="下载进度">
                 <el-progress :percentage="updateProgressPercent" :stroke-width="18" striped striped-flow />
               </el-form-item>
+              <el-form-item v-if="updateBody" label="发布说明">
+                <div class="release-notes">{{ updateBody }}</div>
+              </el-form-item>
+            </el-form>
+          </el-card>
+        </el-tab-pane>
 
-              <el-divider content-position="left">桌面代理</el-divider>
-              <el-alert
-                title="桌面代理只影响本地客户端访问服务器的流量，不影响服务器端下载、上传和任务执行。保存后需要重启客户端。"
-                type="warning"
-                :closable="false"
-                style="margin-bottom: 20px"
-              />
+        <el-tab-pane label="代理" name="proxy">
+          <el-card shadow="hover">
+            <template #header>
+              <div class="card-header">
+                <span>桌面代理</span>
+                <div class="card-actions">
+                  <el-button @click="loadDesktopProxyConfig" :loading="loadingDesktopProxyConfig">
+                    重新读取
+                  </el-button>
+                  <el-button type="primary" @click="saveDesktopProxyConfig" :loading="savingDesktopProxyConfig">
+                    保存代理配置
+                  </el-button>
+                  <el-button type="warning" @click="restartDesktopClient" :loading="restartingDesktopClient">
+                    立即重启客户端
+                  </el-button>
+                </div>
+              </div>
+            </template>
+
+            <el-alert
+              title="桌面代理只影响本地客户端访问服务器的流量，不影响服务器端下载、上传和任务执行。保存后需要重启客户端。"
+              type="warning"
+              :closable="false"
+              style="margin-bottom: 20px"
+            />
+
+            <el-form label-width="180px">
               <el-form-item label="启用桌面代理">
                 <el-switch v-model="desktopProxyEnabled" />
               </el-form-item>
@@ -120,170 +182,231 @@
                   </span>
                 </div>
               </el-form-item>
-              <el-form-item label="代理操作">
-                <div class="card-actions">
-                  <el-button @click="loadDesktopProxyConfig" :loading="loadingDesktopProxyConfig">
-                    重新读取
-                  </el-button>
-                  <el-button type="primary" @click="saveDesktopProxyConfig" :loading="savingDesktopProxyConfig">
-                    保存代理配置
-                  </el-button>
-                  <el-button type="warning" @click="restartDesktopClient" :loading="restartingDesktopClient">
-                    立即重启客户端
-                  </el-button>
+            </el-form>
+          </el-card>
+        </el-tab-pane>
+      </el-tabs>
+    </div>
+
+    <div v-else class="scope-panel">
+      <div class="section-toolbar">
+        <el-alert
+          title="这些配置会写入服务器，影响所有客户端、下载任务、上传链路和直链服务。"
+          type="warning"
+          :closable="false"
+        />
+        <div class="section-toolbar__actions">
+          <el-button type="info" @click="handleReloadConfig" :loading="reloading" :disabled="reloading">
+            从 config.yml 重新导入
+          </el-button>
+          <div class="section-toolbar__hint">
+            配置保存后会自动从数据库读取，无需手动重载
+          </div>
+        </div>
+      </div>
+
+      <el-tabs v-model="activeServerTab" type="border-card">
+        <el-tab-pane label="Telegram配置" name="telegram">
+          <el-card shadow="hover">
+            <template #header>
+              <div class="card-header">
+                <span>Telegram Bot配置</span>
+                <el-button type="primary" @click="saveConfig('telegram')" :loading="saving" :disabled="reloading">
+                  保存配置
+                </el-button>
+              </div>
+            </template>
+            <el-alert
+              type="warning"
+              :closable="false"
+              style="margin-bottom: 20px"
+            >
+              <template #title>
+                <div style="font-size: 13px">
+                  <strong>注意：</strong>修改 API ID、API Hash、Bot Token 或管理员ID 后需要重启服务才能生效。
+                  <br />其他配置（如上传到Telegram）保存后会在下次使用时自动从数据库读取最新配置。
+                </div>
+              </template>
+            </el-alert>
+            <el-form :model="configs.telegram" label-width="180px" :rules="rules" :disabled="reloading">
+              <el-form-item label="API ID" prop="API_ID">
+                <el-input-number v-model="configs.telegram.API_ID" :min="0" style="width: 100%" />
+              </el-form-item>
+              <el-form-item label="API Hash" prop="API_HASH">
+                <el-input v-model="configs.telegram.API_HASH" type="password" show-password />
+              </el-form-item>
+              <el-form-item label="Bot Token" prop="BOT_TOKEN">
+                <el-input v-model="configs.telegram.BOT_TOKEN" type="password" show-password />
+              </el-form-item>
+              <el-form-item label="管理员ID" prop="ADMIN_ID">
+                <el-input-number v-model="configs.telegram.ADMIN_ID" :min="0" style="width: 100%" />
+              </el-form-item>
+              <el-form-item label="转发ID" prop="FORWARD_ID">
+                <el-input v-model="configs.telegram.FORWARD_ID" />
+              </el-form-item>
+              <el-form-item label="上传到Telegram">
+                <el-switch v-model="configs.telegram.UP_TELEGRAM" />
+              </el-form-item>
+            </el-form>
+          </el-card>
+        </el-tab-pane>
+
+        <el-tab-pane label="Rclone配置" name="rclone">
+          <el-card shadow="hover">
+            <template #header>
+              <div class="card-header">
+                <span>Rclone上传配置</span>
+                <el-button type="primary" @click="saveConfig('rclone')" :loading="saving">
+                  保存配置
+                </el-button>
+              </div>
+            </template>
+            <el-alert
+              type="info"
+              :closable="false"
+              style="margin-bottom: 20px"
+            >
+              <template #title>
+                <div style="font-size: 13px">
+                  <strong>提示：</strong>Rclone配置保存后会立即生效，下次上传时会自动从数据库读取最新配置，无需重启服务。
+                </div>
+              </template>
+            </el-alert>
+            <el-form :model="configs.rclone" label-width="180px">
+              <el-divider content-position="left">OneDrive配置</el-divider>
+              <el-form-item label="启用OneDrive上传">
+                <el-switch v-model="configs.rclone.UP_ONEDRIVE" />
+              </el-form-item>
+              <el-form-item label="Rclone远程名称" v-if="configs.rclone.UP_ONEDRIVE">
+                <el-select
+                  v-model="configs.rclone.RCLONE_REMOTE"
+                  placeholder="选择 OneDrive Remote"
+                  filterable
+                  allow-create
+                  default-first-option
+                >
+                  <el-option
+                    v-for="remote in availableRemotes.filter(r => r.type === 'onedrive')"
+                    :key="remote.name"
+                    :label="`${remote.name} (${remote.type})`"
+                    :value="remote.name"
+                  >
+                    <span style="float: left">{{ remote.name }}</span>
+                    <span style="float: right; color: #8492a6; font-size: 12px">{{ remote.type }}</span>
+                  </el-option>
+                </el-select>
+                <div class="el-form-item__help">OneDrive的rclone远程名称(自动过滤 type=onedrive 的 remote)</div>
+              </el-form-item>
+              <el-form-item label="OneDrive路径" v-if="configs.rclone.UP_ONEDRIVE">
+                <el-input v-model="configs.rclone.RCLONE_PATH" />
+                <div class="el-form-item__help">OneDrive上的目标路径（默认：/Downloads）</div>
+              </el-form-item>
+
+              <el-divider content-position="left">Google Drive配置</el-divider>
+              <el-form-item label="启用Google Drive上传">
+                <el-switch v-model="configs.rclone.UP_GOOGLE_DRIVE" />
+              </el-form-item>
+              <el-alert
+                v-if="configs.rclone.UP_GOOGLE_DRIVE"
+                type="info"
+                :closable="false"
+                style="margin-bottom: 20px"
+              >
+                <template #title>
+                  <div style="font-size: 13px">
+                    <strong>提示：</strong>Google Drive 上传使用 rclone，需要在 rclone 配置文件中配置 OAuth2 token。
+                    <br />请确保已在 <code>rclone.conf</code> 中配置了名为 <code>{{ configs.rclone.GOOGLE_DRIVE_REMOTE || 'gdrive' }}</code> 的远程配置。
+                  </div>
+                </template>
+              </el-alert>
+              <el-form-item label="Google Drive远程名称" v-if="configs.rclone.UP_GOOGLE_DRIVE">
+                <el-select
+                  v-model="configs.rclone.GOOGLE_DRIVE_REMOTE"
+                  placeholder="选择 Google Drive Remote"
+                  filterable
+                  allow-create
+                  default-first-option
+                >
+                  <el-option
+                    v-for="remote in availableRemotes.filter(r => r.type === 'drive')"
+                    :key="remote.name"
+                    :label="`${remote.name} (${remote.type})`"
+                    :value="remote.name"
+                  >
+                    <span style="float: left">{{ remote.name }}</span>
+                    <span style="float: right; color: #8492a6; font-size: 12px">{{ remote.type }}</span>
+                  </el-option>
+                </el-select>
+                <div class="el-form-item__help">Google Drive的rclone远程名称(自动过滤 type=drive 的 remote)</div>
+              </el-form-item>
+              <el-form-item label="Google Drive路径" v-if="configs.rclone.UP_GOOGLE_DRIVE">
+                <el-input v-model="configs.rclone.GOOGLE_DRIVE_PATH" />
+                <div class="el-form-item__help">Google Drive上的目标路径（默认：/Downloads）</div>
+              </el-form-item>
+
+              <el-divider content-position="left">通用设置</el-divider>
+              <el-form-item label="上传后删除本地文件">
+                <el-switch v-model="configs.rclone.AUTO_DELETE_AFTER_UPLOAD" />
+                <div class="el-form-item__help">上传成功后自动删除本地文件以节省磁盘空间</div>
+              </el-form-item>
+
+              <el-divider content-position="left">Rclone 配置文件管理</el-divider>
+              <el-alert
+                type="info"
+                :closable="false"
+                style="margin-bottom: 20px"
+              >
+                <template #title>
+                  <div style="font-size: 13px">
+                    <strong>提示:</strong>直接编辑 rclone.conf 文件内容,保存时会自动备份原文件。配置采用 INI 格式,每个远程存储以 <code>[remote_name]</code> 开始。
+                  </div>
+                </template>
+              </el-alert>
+              <el-form-item label="配置文件路径">
+                <el-input v-model="rcloneConfigPath" readonly />
+              </el-form-item>
+              <el-form-item label="配置文件内容">
+                <el-input
+                  v-model="rcloneConfigContent"
+                  type="textarea"
+                  :rows="15"
+                  placeholder="rclone.conf 配置文件内容将在此显示..."
+                  style="font-family: 'Courier New', monospace; font-size: 12px;"
+                />
+                <div class="el-form-item__help">
+                  支持添加多个远程存储配置,修改后立即生效无需重启服务
                 </div>
               </el-form-item>
-          </el-form>
-        </el-card>
-      </el-tab-pane>
+              <el-form-item>
+                <el-button
+                  type="primary"
+                  @click="saveRcloneConfigFile"
+                  :loading="savingRcloneConfig"
+                  :disabled="!rcloneConfigContent"
+                >
+                  保存配置文件
+                </el-button>
+                <el-button @click="loadRcloneConfigFile" :loading="loadingRcloneConfig">
+                  重新加载
+                </el-button>
+                <span v-if="rcloneConfigLastSaved" style="margin-left: 10px; color: #909399; font-size: 12px;">
+                  {{ rcloneConfigLastSaved }}
+                </span>
+              </el-form-item>
+            </el-form>
+          </el-card>
+        </el-tab-pane>
 
-      <!-- Telegram配置 -->
-      <el-tab-pane label="Telegram配置" name="telegram">
-        <el-card shadow="hover">
-          <template #header>
-            <div class="card-header">
-              <span>Telegram Bot配置</span>
-              <el-button type="primary" @click="saveConfig('telegram')" :loading="saving" :disabled="reloading">
-                保存配置
-              </el-button>
-            </div>
-          </template>
-          <el-alert
-            type="warning"
-            :closable="false"
-            style="margin-bottom: 20px"
-          >
-            <template #title>
-              <div style="font-size: 13px">
-                <strong>注意：</strong>修改 API ID、API Hash、Bot Token 或管理员ID 后需要重启服务才能生效。
-                <br />其他配置（如上传到Telegram）保存后会在下次使用时自动从数据库读取最新配置。
+        <el-tab-pane label="下载配置" name="download">
+          <el-card shadow="hover">
+            <template #header>
+              <div class="card-header">
+                <span>下载设置</span>
+                <el-button type="primary" @click="saveConfig('download')" :loading="saving">
+                  保存配置
+                </el-button>
               </div>
             </template>
-          </el-alert>
-          <el-form :model="configs.telegram" label-width="180px" :rules="rules" :disabled="reloading">
-            <el-form-item label="API ID" prop="API_ID">
-              <el-input-number v-model="configs.telegram.API_ID" :min="0" style="width: 100%" />
-            </el-form-item>
-            <el-form-item label="API Hash" prop="API_HASH">
-              <el-input v-model="configs.telegram.API_HASH" type="password" show-password />
-            </el-form-item>
-            <el-form-item label="Bot Token" prop="BOT_TOKEN">
-              <el-input v-model="configs.telegram.BOT_TOKEN" type="password" show-password />
-            </el-form-item>
-            <el-form-item label="管理员ID" prop="ADMIN_ID">
-              <el-input-number v-model="configs.telegram.ADMIN_ID" :min="0" style="width: 100%" />
-            </el-form-item>
-            <el-form-item label="转发ID" prop="FORWARD_ID">
-              <el-input v-model="configs.telegram.FORWARD_ID" />
-            </el-form-item>
-            <el-form-item label="上传到Telegram">
-              <el-switch v-model="configs.telegram.UP_TELEGRAM" />
-            </el-form-item>
-          </el-form>
-        </el-card>
-      </el-tab-pane>
-
-      <!-- Rclone配置 -->
-      <el-tab-pane label="Rclone配置" name="rclone">
-        <el-card shadow="hover">
-          <template #header>
-            <div class="card-header">
-              <span>Rclone上传配置</span>
-              <el-button type="primary" @click="saveConfig('rclone')" :loading="saving">
-                保存配置
-              </el-button>
-            </div>
-          </template>
-          <el-alert
-            type="info"
-            :closable="false"
-            style="margin-bottom: 20px"
-          >
-            <template #title>
-              <div style="font-size: 13px">
-                <strong>提示：</strong>Rclone配置保存后会立即生效，下次上传时会自动从数据库读取最新配置，无需重启服务。
-              </div>
-            </template>
-          </el-alert>
-          <el-form :model="configs.rclone" label-width="180px">
-            <el-divider content-position="left">OneDrive配置</el-divider>
-            <el-form-item label="启用OneDrive上传">
-              <el-switch v-model="configs.rclone.UP_ONEDRIVE" />
-            </el-form-item>
-            <el-form-item label="Rclone远程名称" v-if="configs.rclone.UP_ONEDRIVE">
-              <el-select 
-                v-model="configs.rclone.RCLONE_REMOTE" 
-                placeholder="选择 OneDrive Remote"
-                filterable
-                allow-create
-                default-first-option
-              >
-                <el-option
-                  v-for="remote in availableRemotes.filter(r => r.type === 'onedrive')"
-                  :key="remote.name"
-                  :label="`${remote.name} (${remote.type})`"
-                  :value="remote.name"
-                >
-                  <span style="float: left">{{ remote.name }}</span>
-                  <span style="float: right; color: #8492a6; font-size: 12px">{{ remote.type }}</span>
-                </el-option>
-              </el-select>
-              <div class="el-form-item__help">OneDrive的rclone远程名称(自动过滤 type=onedrive 的 remote)</div>
-            </el-form-item>
-            <el-form-item label="OneDrive路径" v-if="configs.rclone.UP_ONEDRIVE">
-              <el-input v-model="configs.rclone.RCLONE_PATH" />
-              <div class="el-form-item__help">OneDrive上的目标路径（默认：/Downloads）</div>
-            </el-form-item>
-            
-            <el-divider content-position="left">Google Drive配置</el-divider>
-            <el-form-item label="启用Google Drive上传">
-              <el-switch v-model="configs.rclone.UP_GOOGLE_DRIVE" />
-            </el-form-item>
-            <el-alert
-              v-if="configs.rclone.UP_GOOGLE_DRIVE"
-              type="info"
-              :closable="false"
-              style="margin-bottom: 20px"
-            >
-              <template #title>
-                <div style="font-size: 13px">
-                  <strong>提示：</strong>Google Drive 上传使用 rclone，需要在 rclone 配置文件中配置 OAuth2 token。
-                  <br />请确保已在 <code>rclone.conf</code> 中配置了名为 <code>{{ configs.rclone.GOOGLE_DRIVE_REMOTE || 'gdrive' }}</code> 的远程配置。
-                </div>
-              </template>
-            </el-alert>
-            <el-form-item label="Google Drive远程名称" v-if="configs.rclone.UP_GOOGLE_DRIVE">
-              <el-select 
-                v-model="configs.rclone.GOOGLE_DRIVE_REMOTE" 
-                placeholder="选择 Google Drive Remote"
-                filterable
-                allow-create
-                default-first-option
-              >
-                <el-option
-                  v-for="remote in availableRemotes.filter(r => r.type === 'drive')"
-                  :key="remote.name"
-                  :label="`${remote.name} (${remote.type})`"
-                  :value="remote.name"
-                >
-                  <span style="float: left">{{ remote.name }}</span>
-                  <span style="float: right; color: #8492a6; font-size: 12px">{{ remote.type }}</span>
-                </el-option>
-              </el-select>
-              <div class="el-form-item__help">Google Drive的rclone远程名称(自动过滤 type=drive 的 remote)</div>
-            </el-form-item>
-            <el-form-item label="Google Drive路径" v-if="configs.rclone.UP_GOOGLE_DRIVE">
-              <el-input v-model="configs.rclone.GOOGLE_DRIVE_PATH" />
-              <div class="el-form-item__help">Google Drive上的目标路径（默认：/Downloads）</div>
-            </el-form-item>
-            
-            <el-divider content-position="left">通用设置</el-divider>
-            <el-form-item label="上传后删除本地文件">
-              <el-switch v-model="configs.rclone.AUTO_DELETE_AFTER_UPLOAD" />
-              <div class="el-form-item__help">上传成功后自动删除本地文件以节省磁盘空间</div>
-            </el-form-item>
-            
-            <el-divider content-position="left">Rclone 配置文件管理</el-divider>
             <el-alert
               type="info"
               :closable="false"
@@ -291,206 +414,147 @@
             >
               <template #title>
                 <div style="font-size: 13px">
-                  <strong>提示:</strong>直接编辑 rclone.conf 文件内容,保存时会自动备份原文件。配置采用 INI 格式,每个远程存储以 <code>[remote_name]</code> 开始。
+                  <strong>提示：</strong>下载配置保存后会立即生效，下次下载时会自动从数据库读取最新配置，无需重启服务。
                 </div>
               </template>
             </el-alert>
-            <el-form-item label="配置文件路径">
-              <el-input v-model="rcloneConfigPath" readonly />
-            </el-form-item>
-            <el-form-item label="配置文件内容">
-              <el-input
-                v-model="rcloneConfigContent"
-                type="textarea"
-                :rows="15"
-                placeholder="rclone.conf 配置文件内容将在此显示..."
-                style="font-family: 'Courier New', monospace; font-size: 12px;"
-              />
-              <div class="el-form-item__help">
-                支持添加多个远程存储配置,修改后立即生效无需重启服务
-              </div>
-            </el-form-item>
-            <el-form-item>
-              <el-button 
-                type="primary" 
-                @click="saveRcloneConfigFile" 
-                :loading="savingRcloneConfig"
-                :disabled="!rcloneConfigContent"
+            <el-form :model="configs.download" label-width="180px" :disabled="reloading">
+              <el-form-item label="保存路径">
+                <el-input v-model="configs.download.SAVE_PATH" />
+              </el-form-item>
+              <el-form-item label="代理IP">
+                <el-input v-model="configs.download.PROXY_IP" placeholder="留空则不使用代理" />
+              </el-form-item>
+              <el-form-item label="代理端口">
+                <el-input v-model="configs.download.PROXY_PORT" placeholder="留空则不使用代理" />
+              </el-form-item>
+              <el-divider />
+              <el-form-item label="跳过小文件">
+                <el-switch v-model="configs.download.SKIP_SMALL_FILES" />
+                <div class="el-form-item__help">
+                  启用后，小于指定大小的媒体文件将不会被下载
+                </div>
+              </el-form-item>
+              <el-form-item
+                v-if="configs.download.SKIP_SMALL_FILES"
+                label="最小文件大小（MB）"
               >
-                保存配置文件
-              </el-button>
-              <el-button @click="loadRcloneConfigFile" :loading="loadingRcloneConfig">
-                重新加载
-              </el-button>
-              <span v-if="rcloneConfigLastSaved" style="margin-left: 10px; color: #909399; font-size: 12px;">
-                {{ rcloneConfigLastSaved }}
-              </span>
-            </el-form-item>
-          </el-form>
-        </el-card>
-      </el-tab-pane>
+                <el-input-number
+                  v-model="configs.download.MIN_FILE_SIZE_MB"
+                  :min="1"
+                  :max="10000"
+                  style="width: 100%"
+                />
+                <div class="el-form-item__help">
+                  小于此大小的文件将被跳过下载（默认：100MB）
+                </div>
+              </el-form-item>
+            </el-form>
+          </el-card>
+        </el-tab-pane>
 
-      <!-- 下载配置 -->
-      <el-tab-pane label="下载配置" name="download">
-        <el-card shadow="hover">
-          <template #header>
-            <div class="card-header">
-              <span>下载设置</span>
-              <el-button type="primary" @click="saveConfig('download')" :loading="saving">
-                保存配置
-              </el-button>
-            </div>
-          </template>
-          <el-alert
-            type="info"
-            :closable="false"
-            style="margin-bottom: 20px"
-          >
-            <template #title>
-              <div style="font-size: 13px">
-                <strong>提示：</strong>下载配置保存后会立即生效，下次下载时会自动从数据库读取最新配置，无需重启服务。
+        <el-tab-pane label="Aria2配置" name="aria2">
+          <el-card shadow="hover">
+            <template #header>
+              <div class="card-header">
+                <span>Aria2 RPC配置</span>
+                <el-button type="primary" @click="saveConfig('aria2')" :loading="saving">
+                  保存配置
+                </el-button>
               </div>
             </template>
-          </el-alert>
-          <el-form :model="configs.download" label-width="180px" :disabled="reloading">
-            <el-form-item label="保存路径">
-              <el-input v-model="configs.download.SAVE_PATH" />
-            </el-form-item>
-            <el-form-item label="代理IP">
-              <el-input v-model="configs.download.PROXY_IP" placeholder="留空则不使用代理" />
-            </el-form-item>
-            <el-form-item label="代理端口">
-              <el-input v-model="configs.download.PROXY_PORT" placeholder="留空则不使用代理" />
-            </el-form-item>
-            <el-divider />
-            <el-form-item label="跳过小文件">
-              <el-switch v-model="configs.download.SKIP_SMALL_FILES" />
-              <div class="el-form-item__help">
-                启用后，小于指定大小的媒体文件将不会被下载
-              </div>
-            </el-form-item>
-            <el-form-item 
-              label="最小文件大小（MB）" 
-              v-if="configs.download.SKIP_SMALL_FILES"
+            <el-alert
+              type="info"
+              :closable="false"
+              style="margin-bottom: 20px"
             >
-              <el-input-number 
-                v-model="configs.download.MIN_FILE_SIZE_MB" 
-                :min="1" 
-                :max="10000" 
-                style="width: 100%" 
-              />
-              <div class="el-form-item__help">
-                小于此大小的文件将被跳过下载（默认：100MB）
-              </div>
-            </el-form-item>
-          </el-form>
-        </el-card>
-      </el-tab-pane>
+              <template #title>
+                <div style="font-size: 13px">
+                  <strong>提示：</strong>Aria2配置保存后会立即生效，下次连接时会自动从数据库读取最新配置，无需重启服务。
+                </div>
+              </template>
+            </el-alert>
+            <el-form :model="configs.aria2" label-width="180px">
+              <el-form-item label="RPC密钥">
+                <el-input v-model="configs.aria2.RPC_SECRET" type="password" show-password />
+              </el-form-item>
+              <el-form-item label="RPC URL">
+                <el-input v-model="configs.aria2.RPC_URL" />
+              </el-form-item>
+            </el-form>
+          </el-card>
+        </el-tab-pane>
 
-      <!-- Aria2配置 -->
-      <el-tab-pane label="Aria2配置" name="aria2">
-        <el-card shadow="hover">
-          <template #header>
-            <div class="card-header">
-              <span>Aria2 RPC配置</span>
-              <el-button type="primary" @click="saveConfig('aria2')" :loading="saving">
-                保存配置
-              </el-button>
-            </div>
-          </template>
-          <el-alert
-            type="info"
-            :closable="false"
-            style="margin-bottom: 20px"
-          >
-            <template #title>
-              <div style="font-size: 13px">
-                <strong>提示：</strong>Aria2配置保存后会立即生效，下次连接时会自动从数据库读取最新配置，无需重启服务。
+        <el-tab-pane label="直链功能" name="stream">
+          <el-card shadow="hover">
+            <template #header>
+              <div class="card-header">
+                <span>直链功能配置</span>
+                <el-button type="primary" @click="saveConfig('stream')" :loading="saving">
+                  保存配置
+                </el-button>
               </div>
             </template>
-          </el-alert>
-          <el-form :model="configs.aria2" label-width="180px">
-            <el-form-item label="RPC密钥">
-              <el-input v-model="configs.aria2.RPC_SECRET" type="password" show-password />
-            </el-form-item>
-            <el-form-item label="RPC URL">
-              <el-input v-model="configs.aria2.RPC_URL" />
-            </el-form-item>
-          </el-form>
-        </el-card>
-      </el-tab-pane>
-
-      <!-- 直链功能配置 -->
-      <el-tab-pane label="直链功能" name="stream">
-        <el-card shadow="hover">
-          <template #header>
-            <div class="card-header">
-              <span>直链功能配置</span>
-              <el-button type="primary" @click="saveConfig('stream')" :loading="saving">
-                保存配置
-              </el-button>
-            </div>
-          </template>
-          <el-form :model="configs.stream" label-width="180px">
-            <el-form-item label="启用直链功能">
-              <el-switch v-model="configs.stream.ENABLE_STREAM" />
-            </el-form-item>
-            <el-form-item label="日志频道ID">
-              <el-input v-model="configs.stream.BIN_CHANNEL" />
-            </el-form-item>
-            <el-form-item label="Web服务器端口">
-              <el-input-number v-model="configs.stream.STREAM_PORT" :min="1" :max="65535" style="width: 100%" />
-            </el-form-item>
-            <el-form-item label="绑定地址">
-              <el-input v-model="configs.stream.STREAM_BIND_ADDRESS" />
-            </el-form-item>
-            <el-form-item label="哈希长度">
-              <el-input-number v-model="configs.stream.STREAM_HASH_LENGTH" :min="5" :max="64" style="width: 100%" />
-            </el-form-item>
-            <el-form-item label="使用SSL">
-              <el-switch v-model="configs.stream.STREAM_HAS_SSL" />
-            </el-form-item>
-            <el-form-item label="隐藏端口">
-              <el-switch v-model="configs.stream.STREAM_NO_PORT" />
-            </el-form-item>
-            <el-form-item label="完全限定域名">
-              <el-input v-model="configs.stream.STREAM_FQDN" />
-            </el-form-item>
-            <el-form-item label="保持连接活跃">
-              <el-switch v-model="configs.stream.STREAM_KEEP_ALIVE" />
-            </el-form-item>
-            <el-form-item label="Ping间隔（秒）">
-              <el-input-number v-model="configs.stream.STREAM_PING_INTERVAL" :min="60" style="width: 100%" />
-            </el-form-item>
-            <el-form-item label="使用会话文件">
-              <el-switch v-model="configs.stream.STREAM_USE_SESSION_FILE" />
-            </el-form-item>
-            <el-form-item label="允许使用直链的用户">
-              <el-input v-model="configs.stream.STREAM_ALLOWED_USERS" placeholder="逗号分隔，留空则允许所有人" />
-            </el-form-item>
-            <el-form-item label="自动添加到下载队列">
-              <el-switch v-model="configs.stream.STREAM_AUTO_DOWNLOAD" />
-            </el-form-item>
-            <el-form-item label="发送直链信息给用户">
-              <el-switch v-model="configs.stream.SEND_STREAM_LINK" />
-            </el-form-item>
-            <el-form-item label="多机器人Token列表">
-              <el-input
-                v-model="multiBotTokensText"
-                type="textarea"
-                :rows="4"
-                placeholder="每行一个Token，或逗号分隔"
-                @input="updateMultiBotTokens"
-              />
-              <div class="el-form-item__help">
-                当前配置了 {{ (configs.stream.MULTI_BOT_TOKENS || []).length }} 个额外的Bot Token
-              </div>
-            </el-form-item>
-          </el-form>
-        </el-card>
-      </el-tab-pane>
-
-    </el-tabs>
+            <el-form :model="configs.stream" label-width="180px">
+              <el-form-item label="启用直链功能">
+                <el-switch v-model="configs.stream.ENABLE_STREAM" />
+              </el-form-item>
+              <el-form-item label="日志频道ID">
+                <el-input v-model="configs.stream.BIN_CHANNEL" />
+              </el-form-item>
+              <el-form-item label="Web服务器端口">
+                <el-input-number v-model="configs.stream.STREAM_PORT" :min="1" :max="65535" style="width: 100%" />
+              </el-form-item>
+              <el-form-item label="绑定地址">
+                <el-input v-model="configs.stream.STREAM_BIND_ADDRESS" />
+              </el-form-item>
+              <el-form-item label="哈希长度">
+                <el-input-number v-model="configs.stream.STREAM_HASH_LENGTH" :min="5" :max="64" style="width: 100%" />
+              </el-form-item>
+              <el-form-item label="使用SSL">
+                <el-switch v-model="configs.stream.STREAM_HAS_SSL" />
+              </el-form-item>
+              <el-form-item label="隐藏端口">
+                <el-switch v-model="configs.stream.STREAM_NO_PORT" />
+              </el-form-item>
+              <el-form-item label="完全限定域名">
+                <el-input v-model="configs.stream.STREAM_FQDN" />
+              </el-form-item>
+              <el-form-item label="保持连接活跃">
+                <el-switch v-model="configs.stream.STREAM_KEEP_ALIVE" />
+              </el-form-item>
+              <el-form-item label="Ping间隔（秒）">
+                <el-input-number v-model="configs.stream.STREAM_PING_INTERVAL" :min="60" style="width: 100%" />
+              </el-form-item>
+              <el-form-item label="使用会话文件">
+                <el-switch v-model="configs.stream.STREAM_USE_SESSION_FILE" />
+              </el-form-item>
+              <el-form-item label="允许使用直链的用户">
+                <el-input v-model="configs.stream.STREAM_ALLOWED_USERS" placeholder="逗号分隔，留空则允许所有人" />
+              </el-form-item>
+              <el-form-item label="自动添加到下载队列">
+                <el-switch v-model="configs.stream.STREAM_AUTO_DOWNLOAD" />
+              </el-form-item>
+              <el-form-item label="发送直链信息给用户">
+                <el-switch v-model="configs.stream.SEND_STREAM_LINK" />
+              </el-form-item>
+              <el-form-item label="多机器人Token列表">
+                <el-input
+                  v-model="multiBotTokensText"
+                  type="textarea"
+                  :rows="4"
+                  placeholder="每行一个Token，或逗号分隔"
+                  @input="updateMultiBotTokens"
+                />
+                <div class="el-form-item__help">
+                  当前配置了 {{ (configs.stream.MULTI_BOT_TOKENS || []).length }} 个额外的Bot Token
+                </div>
+              </el-form-item>
+            </el-form>
+          </el-card>
+        </el-tab-pane>
+      </el-tabs>
+    </div>
   </div>
 </template>
 
@@ -507,7 +571,9 @@ import { useRouter } from 'vue-router'
 
 const router = useRouter()
 const authStore = useAuthStore()
-const activeTab = ref('client')
+const settingsScope = ref<'client' | 'server'>('client')
+const activeClientTab = ref('connection')
+const activeServerTab = ref('telegram')
 const saving = ref(false)
 const reloading = ref(false)
 const clientServerUrl = ref(getServerBaseUrl())
@@ -549,17 +615,29 @@ const updateStatusTagType = computed(() => {
   return 'info'
 })
 
-// Rclone 配置文件管理相关状态
 const rcloneConfigContent = ref('')
 const rcloneConfigPath = ref('/root/.config/rclone/rclone.conf')
 const loadingRcloneConfig = ref(false)
 const savingRcloneConfig = ref(false)
 const rcloneConfigLastSaved = ref('')
 
-// Rclone remotes 列表
 const availableRemotes = ref<RcloneRemote[]>([])
 const configCategories = ['telegram', 'rclone', 'download', 'aria2', 'stream'] as const
 type ConfigCategory = typeof configCategories[number]
+
+const scopeTitle = computed(() => (
+  settingsScope.value === 'client' ? '客户端本地设置' : '服务端运行设置'
+))
+const scopeSummary = computed(() => (
+  settingsScope.value === 'client'
+    ? '当前页面仅管理这台电脑上的连接地址、更新和代理能力。'
+    : '当前页面会直接修改服务器配置，所有桌面端和 Web 端都会受到影响。'
+))
+const scopeDescription = computed(() => (
+  settingsScope.value === 'client'
+    ? '本地客户端设置和服务端配置已经拆分显示，避免混淆。'
+    : '正在编辑服务端配置，保存后会影响整个 MistRelay 服务。'
+))
 
 const effectiveServerUrlLabel = computed(() => clientServerUrl.value || '同源 /api')
 const connectionStatusLabel = computed(() => {
@@ -584,7 +662,6 @@ const desktopProxyStatusTagType = computed(() => {
   return 'info'
 })
 
-// 配置数据
 const configs = ref({
   telegram: {
     API_ID: 0,
@@ -633,7 +710,6 @@ const configs = ref({
   }
 })
 
-// 多机器人Token文本（用于显示和编辑）
 const multiBotTokensText = computed({
   get: () => {
     const tokens = configs.value.stream.MULTI_BOT_TOKENS || []
@@ -649,7 +725,7 @@ function updateMultiBotTokens(text: string) {
     configs.value.stream.MULTI_BOT_TOKENS = []
     return
   }
-  // 支持换行和逗号分隔
+
   const tokens = text
     .split(/[,\n]/)
     .map(t => t.trim())
@@ -657,7 +733,6 @@ function updateMultiBotTokens(text: string) {
   configs.value.stream.MULTI_BOT_TOKENS = tokens
 }
 
-// 表单验证规则
 const rules = {
   API_ID: [{ required: true, message: '请输入API ID', trigger: 'blur' }],
   API_HASH: [{ required: true, message: '请输入API Hash', trigger: 'blur' }],
@@ -829,6 +904,7 @@ async function handleCheckUpdate() {
   updateStatusText.value = ''
   updateStatus.value = 'idle'
   updateAvailable.value = false
+  updateBody.value = ''
   pendingUpdate = null
   try {
     const { result, update } = await checkForUpdate()
@@ -901,7 +977,6 @@ async function fetchConfigs() {
     for (const category of configCategories) {
       const response = await getConfig(category)
       if (response.success && response.data) {
-        // 合并配置，保留默认值
         configs.value[category] = {
           ...configs.value[category],
           ...response.data
@@ -919,12 +994,12 @@ async function saveConfig(category: ConfigCategory) {
     ElMessage.warning('配置正在重载中，请稍候...')
     return
   }
-  
+
   saving.value = true
   try {
     const categoryConfig = configs.value[category]
     const response = await updateConfig(categoryConfig)
-    
+
     if (response.success) {
       if (response.needs_restart) {
         ElMessage.warning({
@@ -934,7 +1009,6 @@ async function saveConfig(category: ConfigCategory) {
       } else {
         ElMessage.success(response.message || '配置已保存，下次使用时将从数据库读取最新配置')
       }
-      // 重新获取配置以确保同步
       await fetchConfigs()
     } else {
       ElMessage.error(response.error || '配置保存失败')
@@ -958,15 +1032,13 @@ async function handleReloadConfig() {
         type: 'info'
       }
     )
-    
-    // 开始重载，锁定页面
+
     reloading.value = true
-    
+
     try {
       const response = await reloadConfig()
       if (response.success) {
         ElMessage.success(response.message || '配置已从config.yml重新导入到数据库')
-        // 重新获取配置
         await fetchConfigs()
       } else {
         ElMessage.error(response.error || '配置导入失败')
@@ -975,7 +1047,6 @@ async function handleReloadConfig() {
       console.error('导入配置失败:', err)
       ElMessage.error(err.message || '配置导入失败')
     } finally {
-      // 重载完成，解锁页面
       reloading.value = false
     }
   } catch (err: any) {
@@ -986,7 +1057,6 @@ async function handleReloadConfig() {
   }
 }
 
-// Rclone 配置文件管理函数
 async function loadRcloneConfigFile() {
   loadingRcloneConfig.value = true
   try {
@@ -1016,7 +1086,7 @@ async function saveRcloneConfigFile() {
     ElMessage.warning('配置内容不能为空')
     return
   }
-  
+
   try {
     await ElMessageBox.confirm(
       '确定要保存 Rclone 配置文件吗?原文件将被备份为 rclone.conf.bak',
@@ -1027,18 +1097,16 @@ async function saveRcloneConfigFile() {
         type: 'warning'
       }
     )
-    
+
     savingRcloneConfig.value = true
-    
+
     try {
       const response = await saveRcloneConfig(rcloneConfigContent.value)
       if (response.success) {
         ElMessage.success(response.message || '配置文件保存成功')
         const now = new Date()
         rcloneConfigLastSaved.value = `最后保存: ${now.toLocaleString()}`
-        // 重新加载配置以确保同步
         await loadRcloneConfigFile()
-        // 刷新 remotes 列表
         await loadRcloneRemotes()
       } else {
         ElMessage.error(response.error || '保存配置文件失败')
@@ -1056,7 +1124,6 @@ async function saveRcloneConfigFile() {
   }
 }
 
-// 加载 Rclone Remotes 列表
 async function loadRcloneRemotes() {
   try {
     const response = await getRcloneRemotes()
@@ -1075,9 +1142,7 @@ onMounted(() => {
   fetchConfigs()
   void testConnection(false)
   void loadDesktopProxyConfig()
-  // 自动加载 Rclone 配置文件
   loadRcloneConfigFile()
-  // 自动加载 Rclone remotes 列表
   loadRcloneRemotes()
 })
 </script>
@@ -1088,15 +1153,55 @@ onMounted(() => {
 }
 
 .page-header {
-  @apply mb-6 flex items-center justify-between;
+  @apply flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between;
+}
+
+.page-copy {
+  @apply space-y-1;
 }
 
 .page-title {
-  @apply text-3xl font-bold text-gray-800 mb-2;
+  @apply text-3xl font-bold text-gray-800;
 }
 
 .page-subtitle {
   @apply text-gray-600;
+}
+
+.scope-switch {
+  @apply self-start lg:self-auto;
+}
+
+.scope-summary {
+  @apply border-0 bg-slate-50;
+}
+
+.scope-summary__header {
+  @apply flex flex-col gap-4 md:flex-row md:items-center md:justify-between;
+}
+
+.scope-summary__title {
+  @apply text-lg font-semibold text-slate-900;
+}
+
+.scope-summary__desc {
+  @apply mt-1 text-sm text-slate-600;
+}
+
+.scope-panel {
+  @apply space-y-4;
+}
+
+.section-toolbar {
+  @apply flex flex-col gap-4 rounded-2xl border border-amber-200 bg-amber-50 p-4;
+}
+
+.section-toolbar__actions {
+  @apply flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between;
+}
+
+.section-toolbar__hint {
+  @apply text-xs text-amber-800;
 }
 
 .card-header {
@@ -1104,15 +1209,23 @@ onMounted(() => {
 }
 
 .card-actions {
-  @apply flex items-center gap-3;
+  @apply flex items-center gap-3 flex-wrap;
 }
 
 .connection-status {
-  @apply flex items-center gap-3;
+  @apply flex items-center gap-3 flex-wrap;
 }
 
 .connection-status-text {
   @apply text-sm text-gray-500;
+}
+
+.version-row {
+  @apply flex items-center gap-3 flex-wrap;
+}
+
+.release-notes {
+  @apply rounded-xl bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-600 whitespace-pre-wrap;
 }
 
 .quick-actions {
@@ -1120,6 +1233,6 @@ onMounted(() => {
 }
 
 .el-form-item__help {
-  @apply text-xs text-gray-500 mt-1;
+  @apply mt-1 text-xs text-gray-500;
 }
 </style>

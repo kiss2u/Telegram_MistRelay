@@ -150,136 +150,244 @@
         </div>
       </div>
 
-      <!-- 列表视图 -->
-      <el-table
-        v-if="viewMode === 'list'"
-        :data="paginatedItems"
-        v-loading="loading"
-        style="width: 100%; margin-top: 20px"
-        @row-click="handleRowClick"
-        :row-style="{ cursor: 'pointer' }"
-      >
-        <el-table-column label="名称" min-width="200">
-          <template #default="{ row }">
-            <div class="file-name">
-              <el-icon :size="18" style="margin-right: 8px">
-                <Folder v-if="row.isDir" />
-                <Picture v-else-if="isImage(row.name)" />
-                <VideoPlay v-else-if="isVideo(row.name)" />
-                <Document v-else />
-              </el-icon>
-              {{ row.name }}
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column prop="size" label="大小" width="120">
-          <template #default="{ row }">
-            {{ row.isDir ? '-' : formatBytes(row.size) }}
-          </template>
-        </el-table-column>
-        <el-table-column prop="modTime" label="修改时间" width="180">
-          <template #default="{ row }">
-            {{ formatDate(row.modTime) }}
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="150" align="center">
-          <template #default="{ row }">
-            <el-button-group>
-              <el-button
-                v-if="!row.isDir" 
-                type="primary" 
-                link 
-                :icon="Download"
-                :loading="Boolean(downloadingPaths[row.path])"
-                @click.stop="handleDownload(row)"
-              />
-              <el-button 
-                type="danger" 
-                link 
-                :icon="Delete"
-                @click.stop="handleDelete(row)"
-              />
-            </el-button-group>
-          </template>
-        </el-table-column>
-      </el-table>
+      <div class="tg-drive-shell" v-loading="loading">
+        <aside class="tg-filter-rail">
+          <button
+            v-for="filter in quickFilterOptions"
+            :key="filter.key"
+            class="tg-filter-pill"
+            :class="{ 'is-active': currentFilter === filter.key }"
+            @click="currentFilter = filter.key"
+          >
+            <span class="tg-filter-pill-head">
+              <span>{{ filter.label }}</span>
+              <span class="tg-filter-pill-count">{{ filter.count }}</span>
+            </span>
+            <span class="tg-filter-pill-desc">{{ filter.description }}</span>
+          </button>
+        </aside>
 
-      <!-- 网格视图 -->
-      <div v-else class="grid-view">
-        <div
-          v-for="item in paginatedItems"
-          :key="item.path"
-          class="grid-item"
-          @click="handleRowClick(item)"
-        >
-          <div class="grid-item-preview">
-            <el-icon v-if="item.isDir" :size="48" class="grid-icon">
+        <section class="tg-drive-main">
+          <div class="tg-stream-header">
+            <div>
+              <div class="tg-stream-title">文件流</div>
+              <div class="tg-stream-subtitle">
+                {{ currentRemote || '未选择存储' }} · {{ quickFilterOptions.find(item => item.key === currentFilter)?.label || '全部' }} · {{ filteredItems.length }} 项
+              </div>
+            </div>
+            <el-tag round effect="plain">
+              双击打开，单击查看详情
+            </el-tag>
+          </div>
+
+          <div v-if="viewMode === 'list'" class="tg-stream-list">
+            <div
+              v-for="item in paginatedItems"
+              :key="item.path"
+              class="tg-file-row"
+              :class="{ 'is-active': selectedItem?.path === item.path }"
+              @click="selectItem(item)"
+              @dblclick="handleRowClick(item)"
+            >
+              <div class="tg-file-avatar">
+                <el-icon v-if="item.isDir" :size="22">
+                  <Folder />
+                </el-icon>
+                <el-image
+                  v-else-if="isImage(item.name)"
+                  :src="getThumbnailUrl(item)"
+                  fit="cover"
+                  class="tg-file-thumb"
+                >
+                  <template #error>
+                    <div class="tg-file-thumb-fallback">
+                      <el-icon :size="22"><Picture /></el-icon>
+                    </div>
+                  </template>
+                </el-image>
+                <div v-else-if="isVideo(item.name)" class="tg-file-thumb-fallback is-video">
+                  <el-icon :size="22"><VideoPlay /></el-icon>
+                </div>
+                <el-icon v-else :size="22">
+                  <Document />
+                </el-icon>
+              </div>
+
+              <div class="tg-file-body">
+                <div class="tg-file-title-row">
+                  <span class="tg-file-title" :title="item.name">{{ item.name }}</span>
+                  <el-tag size="small" effect="plain" round>
+                    {{ getItemTypeLabel(item) }}
+                  </el-tag>
+                </div>
+                <div class="tg-file-meta">
+                  {{ getItemMetaLine(item) }}
+                </div>
+                <div class="tg-file-path" :title="item.path">
+                  {{ item.path }}
+                </div>
+              </div>
+
+              <div class="tg-file-trailing">
+                <div class="tg-file-date">{{ formatDate(item.modTime) }}</div>
+                <div class="tg-file-actions">
+                  <el-button link type="primary" @click.stop="handleRowClick(item)">
+                    {{ item.isDir ? '进入' : '打开' }}
+                  </el-button>
+                  <el-button
+                    v-if="!item.isDir"
+                    link
+                    :loading="Boolean(downloadingPaths[item.path])"
+                    @click.stop="handleDownload(item)"
+                  >
+                    下载
+                  </el-button>
+                  <el-button link type="danger" @click.stop="handleDelete(item)">
+                    删除
+                  </el-button>
+                </div>
+              </div>
+            </div>
+            <el-empty v-if="paginatedItems.length === 0" description="当前筛选下没有文件" :image-size="72" />
+          </div>
+
+          <div v-else class="grid-view">
+            <div
+              v-for="item in paginatedItems"
+              :key="item.path"
+              class="grid-item"
+              @click="handleRowClick(item)"
+            >
+              <div class="grid-item-preview">
+                <el-icon v-if="item.isDir" :size="48" class="grid-icon">
+                  <Folder />
+                </el-icon>
+                <el-image
+                  v-else-if="isImage(item.name)"
+                  :src="getThumbnailUrl(item)"
+                  fit="cover"
+                  class="grid-thumbnail"
+                  lazy
+                >
+                  <template #placeholder>
+                    <div class="image-placeholder">
+                      <el-icon :size="48"><Picture /></el-icon>
+                    </div>
+                  </template>
+                  <template #error>
+                    <div class="image-placeholder">
+                      <el-icon :size="48"><Picture /></el-icon>
+                    </div>
+                  </template>
+                </el-image>
+                <div v-else-if="isVideo(item.name)" class="grid-video">
+                  <el-image
+                    :src="getThumbnailUrl(item)"
+                    fit="cover"
+                    class="grid-thumbnail"
+                    lazy
+                  >
+                    <template #placeholder>
+                      <div class="video-placeholder">
+                        <el-icon :size="48"><VideoPlay /></el-icon>
+                      </div>
+                    </template>
+                    <template #error>
+                      <div class="video-placeholder">
+                        <el-icon :size="48"><VideoPlay /></el-icon>
+                      </div>
+                    </template>
+                  </el-image>
+                  <div class="video-badge">视频</div>
+                </div>
+                <el-icon v-else :size="48" class="grid-icon">
+                  <Document />
+                </el-icon>
+              </div>
+              <div class="grid-item-name" :title="item.name">{{ item.name }}</div>
+              <div class="grid-item-info">
+                <div v-if="!item.isDir" class="grid-item-size">{{ formatBytes(item.size) }}</div>
+                <div class="grid-item-actions">
+                  <el-button
+                    v-if="!item.isDir"
+                    circle
+                    size="small"
+                    :icon="Download"
+                    :loading="Boolean(downloadingPaths[item.path])"
+                    @click.stop="handleDownload(item)"
+                  />
+                  <el-button
+                    circle
+                    size="small"
+                    type="danger"
+                    :icon="Delete"
+                    @click.stop="handleDelete(item)"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <aside class="tg-inspector" v-if="selectedItem">
+          <div class="tg-inspector-preview" @click="!selectedItem.isDir && handleRowClick(selectedItem)">
+            <el-icon v-if="selectedItem.isDir" :size="54">
               <Folder />
             </el-icon>
             <el-image
-              v-else-if="isImage(item.name)"
-              :src="getThumbnailUrl(item)"
+              v-else-if="isImage(selectedItem.name)"
+              :src="getThumbnailUrl(selectedItem)"
               fit="cover"
-              class="grid-thumbnail"
-              lazy
+              class="tg-inspector-image"
             >
-              <template #placeholder>
-                <div class="image-placeholder">
-                  <el-icon :size="48"><Picture /></el-icon>
-                </div>
-              </template>
               <template #error>
-                <div class="image-placeholder">
-                  <el-icon :size="48"><Picture /></el-icon>
+                <div class="tg-inspector-fallback">
+                  <el-icon :size="54"><Picture /></el-icon>
                 </div>
               </template>
             </el-image>
-            <div v-else-if="isVideo(item.name)" class="grid-video">
-              <el-image
-                :src="getThumbnailUrl(item)"
-                fit="cover"
-                class="grid-thumbnail"
-                lazy
-              >
-                <template #placeholder>
-                  <div class="video-placeholder">
-                    <el-icon :size="48"><VideoPlay /></el-icon>
-                  </div>
-                </template>
-                <template #error>
-                  <div class="video-placeholder">
-                    <el-icon :size="48"><VideoPlay /></el-icon>
-                  </div>
-                </template>
-              </el-image>
-              <div class="video-badge">视频</div>
+            <div v-else-if="isVideo(selectedItem.name)" class="tg-inspector-fallback is-video">
+              <el-icon :size="54"><VideoPlay /></el-icon>
             </div>
-            <el-icon v-else :size="48" class="grid-icon">
-              <Document />
-            </el-icon>
+            <div v-else class="tg-inspector-fallback">
+              <el-icon :size="54"><Document /></el-icon>
+            </div>
           </div>
-          <div class="grid-item-name" :title="item.name">{{ item.name }}</div>
-          <div class="grid-item-info">
-             <div v-if="!item.isDir" class="grid-item-size">{{ formatBytes(item.size) }}</div>
-             <div class="grid-item-actions">
-               <el-button 
-                 v-if="!item.isDir"
-                 circle 
-                 size="small" 
-                 :icon="Download"
-                 :loading="Boolean(downloadingPaths[item.path])"
-                 @click.stop="handleDownload(item)"
-               />
-               <el-button 
-                 circle 
-                 size="small" 
-                 type="danger" 
-                 :icon="Delete"
-                 @click.stop="handleDelete(item)"
-               />
-             </div>
+
+          <div class="tg-inspector-title">{{ selectedItem.name }}</div>
+          <div class="tg-inspector-subtitle">{{ getItemMetaLine(selectedItem) }}</div>
+
+          <div class="tg-inspector-actions">
+            <el-button type="primary" @click="handleRowClick(selectedItem)">
+              {{ selectedItem.isDir ? '进入文件夹' : '打开预览' }}
+            </el-button>
+            <el-button v-if="!selectedItem.isDir" @click="handleDownload(selectedItem)" :loading="Boolean(downloadingPaths[selectedItem.path])">
+              下载到本地
+            </el-button>
+            <el-button type="danger" plain @click="handleDelete(selectedItem)">
+              删除
+            </el-button>
           </div>
-        </div>
+
+          <div class="tg-inspector-meta">
+            <div class="tg-inspector-meta-row">
+              <span>路径</span>
+              <span>{{ selectedItem.path }}</span>
+            </div>
+            <div class="tg-inspector-meta-row">
+              <span>修改时间</span>
+              <span>{{ formatDate(selectedItem.modTime) }}</span>
+            </div>
+            <div class="tg-inspector-meta-row">
+              <span>大小</span>
+              <span>{{ selectedItem.isDir ? '-' : formatBytes(selectedItem.size) }}</span>
+            </div>
+            <div class="tg-inspector-meta-row">
+              <span>存储</span>
+              <span>{{ currentRemote }}</span>
+            </div>
+          </div>
+        </aside>
       </div>
 
       <!-- 分页 -->
@@ -367,12 +475,16 @@ interface RemoteUsageState {
   loading: boolean
 }
 
+type QuickFilter = 'all' | 'folders' | 'videos' | 'images' | 'documents' | 'recent'
+
 const availableRemotes = ref<RcloneRemote[]>([])
 const currentRemote = ref('')
 const currentPath = ref('/')
 const items = ref<DriveItem[]>([])
 const loading = ref(false)
 const remoteUsageStates = ref<Record<string, RemoteUsageState>>({})
+const currentFilter = ref<QuickFilter>('all')
+const selectedItemPath = ref('')
 
 // 搜索和分页
 const searchKeyword = ref('')
@@ -435,8 +547,41 @@ const pathSegments = computed(() => {
   return path.split('/').filter(Boolean)
 })
 
+function matchesQuickFilter(item: DriveItem, filter: QuickFilter): boolean {
+  switch (filter) {
+    case 'folders':
+      return item.isDir
+    case 'videos':
+      return !item.isDir && isVideo(item.name)
+    case 'images':
+      return !item.isDir && isImage(item.name)
+    case 'documents':
+      return !item.isDir && !isVideo(item.name) && !isImage(item.name)
+    case 'recent':
+      return !item.isDir
+    default:
+      return true
+  }
+}
+
+const quickFilterOptions = computed(() => {
+  const definitions: Array<{ key: QuickFilter; label: string; description: string }> = [
+    { key: 'all', label: '全部', description: '像 Telegram 媒体页一样汇总当前目录' },
+    { key: 'folders', label: '文件夹', description: '先处理目录导航和归档' },
+    { key: 'videos', label: '视频', description: '在线播放和本地缓存优先' },
+    { key: 'images', label: '图片', description: '快速预览图片资源' },
+    { key: 'documents', label: '文档', description: '压缩包、PDF 和普通文件' },
+    { key: 'recent', label: '最近', description: '按时间倒序查看最近文件' },
+  ]
+
+  return definitions.map(item => ({
+    ...item,
+    count: items.value.filter(file => matchesQuickFilter(file, item.key)).length,
+  }))
+})
+
 const filteredItems = computed(() => {
-  let result = items.value.slice()
+  let result = items.value.filter(item => matchesQuickFilter(item, currentFilter.value))
   
   // 搜索过滤
   if (searchKeyword.value) {
@@ -446,6 +591,12 @@ const filteredItems = computed(() => {
   
   // 排序:目录在前,文件在后, 然后根据选择的排序方式排序
   result.sort((a, b) => {
+    if (currentFilter.value === 'recent') {
+      const timeA = a.modTime ? new Date(a.modTime).getTime() : 0
+      const timeB = b.modTime ? new Date(b.modTime).getTime() : 0
+      return timeB - timeA
+    }
+
     // 始终让目录排在前面
     if (a.isDir !== b.isDir) {
       return a.isDir ? -1 : 1
@@ -474,6 +625,10 @@ const paginatedItems = computed(() => {
   return filteredItems.value.slice(start, end)
 })
 
+const selectedItem = computed(() => {
+  return paginatedItems.value.find(item => item.path === selectedItemPath.value) || paginatedItems.value[0] || null
+})
+
 // 文件类型判断
 function isImage(filename: string): boolean {
   const imageExts = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg', '.ico']
@@ -497,6 +652,48 @@ function getVideoType(filename: string | undefined): string {
   if (ext === 'webm') return 'video/webm'
   if (ext === 'ogg') return 'video/ogg'
   return ''
+}
+
+function getItemTypeLabel(item: DriveItem): string {
+  if (item.isDir) return '文件夹'
+  if (isVideo(item.name)) return '视频'
+  if (isImage(item.name)) return '图片'
+  return '文件'
+}
+
+function formatRelativeTime(dateStr: string | undefined): string {
+  if (!dateStr) return '未知时间'
+
+  const timestamp = new Date(dateStr).getTime()
+  if (Number.isNaN(timestamp)) return '未知时间'
+
+  const diff = timestamp - Date.now()
+  const abs = Math.abs(diff)
+  const minute = 60 * 1000
+  const hour = 60 * minute
+  const day = 24 * hour
+
+  const formatter = new Intl.RelativeTimeFormat('zh-CN', { numeric: 'auto' })
+
+  if (abs < hour) {
+    return formatter.format(Math.round(diff / minute), 'minute')
+  }
+  if (abs < day) {
+    return formatter.format(Math.round(diff / hour), 'hour')
+  }
+  return formatter.format(Math.round(diff / day), 'day')
+}
+
+function getItemMetaLine(item: DriveItem): string {
+  if (item.isDir) {
+    return `${getItemTypeLabel(item)} · ${formatRelativeTime(item.modTime)}`
+  }
+
+  return `${getItemTypeLabel(item)} · ${formatBytes(item.size)} · ${formatRelativeTime(item.modTime)}`
+}
+
+function selectItem(item: DriveItem) {
+  selectedItemPath.value = item.path
 }
 
 // 缩略图URL响应式存储
@@ -713,14 +910,17 @@ async function browse() {
       items.value = response.items
       // 重置分页
       currentPage.value = 1
+      selectedItemPath.value = response.items[0]?.path || ''
     } else {
       ElMessage.error(response.error || '获取文件列表失败')
       items.value = []
+      selectedItemPath.value = ''
     }
   } catch (err: any) {
     console.error('浏览失败:', err)
     ElMessage.error(err.message || '获取文件列表失败')
     items.value = []
+    selectedItemPath.value = ''
   } finally {
     loading.value = false
   }
@@ -1100,8 +1300,15 @@ watch(viewMode, (newMode) => {
   }
 })
 
+watch([currentFilter, searchKeyword], () => {
+  currentPage.value = 1
+})
+
 // 监听分页数据变化
 watch(paginatedItems, () => {
+    if (!paginatedItems.value.some(item => item.path === selectedItemPath.value)) {
+      selectedItemPath.value = paginatedItems.value[0]?.path || ''
+    }
     queueThumbnails()
 }, { deep: true })
 
@@ -1261,6 +1468,295 @@ watch(paginatedItems, () => {
 
 .el-breadcrumb :deep(.el-breadcrumb__inner):hover {
   color: var(--el-color-primary);
+}
+
+.tg-drive-shell {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr) 320px;
+  gap: 16px;
+  margin-top: 18px;
+  align-items: start;
+}
+
+.tg-filter-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  position: sticky;
+  top: 0;
+}
+
+.tg-filter-pill {
+  appearance: none;
+  width: 100%;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid #e2e8f0;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  text-align: left;
+  transition: all 0.2s ease;
+}
+
+.tg-filter-pill:hover,
+.tg-filter-pill.is-active {
+  border-color: #bfdbfe;
+  box-shadow: 0 12px 30px rgba(59, 130, 246, 0.12);
+  transform: translateY(-1px);
+}
+
+.tg-filter-pill.is-active {
+  background: linear-gradient(180deg, #eff6ff 0%, #dbeafe 100%);
+}
+
+.tg-filter-pill-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.tg-filter-pill-count {
+  color: #2563eb;
+}
+
+.tg-filter-pill-desc {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #64748b;
+}
+
+.tg-drive-main {
+  min-width: 0;
+}
+
+.tg-stream-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px;
+  border-radius: 18px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  border: 1px solid #e2e8f0;
+  margin-bottom: 14px;
+}
+
+.tg-stream-title {
+  font-size: 18px;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.tg-stream-subtitle {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.tg-stream-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tg-file-row {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) 180px;
+  gap: 14px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid #e2e8f0;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  transition: all 0.2s ease;
+}
+
+.tg-file-row:hover,
+.tg-file-row.is-active {
+  border-color: #bfdbfe;
+  box-shadow: 0 16px 32px rgba(59, 130, 246, 0.10);
+}
+
+.tg-file-row.is-active {
+  background: linear-gradient(180deg, #eff6ff 0%, #f8fbff 100%);
+}
+
+.tg-file-avatar {
+  width: 56px;
+  height: 56px;
+  border-radius: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #e0e7ff 0%, #dbeafe 100%);
+  color: #2563eb;
+  overflow: hidden;
+}
+
+.tg-file-thumb {
+  width: 100%;
+  height: 100%;
+}
+
+.tg-file-thumb-fallback {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #f1f5f9 0%, #dbeafe 100%);
+  color: #2563eb;
+}
+
+.tg-file-thumb-fallback.is-video {
+  background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+}
+
+.tg-file-body {
+  min-width: 0;
+}
+
+.tg-file-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tg-file-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.tg-file-meta {
+  margin-top: 6px;
+  font-size: 13px;
+  color: #475569;
+}
+
+.tg-file-path {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #94a3b8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tg-file-trailing {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.tg-file-date {
+  font-size: 12px;
+  color: #64748b;
+  text-align: right;
+}
+
+.tg-file-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.tg-inspector {
+  position: sticky;
+  top: 0;
+  padding: 18px;
+  border-radius: 22px;
+  border: 1px solid #dbeafe;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  box-shadow: 0 18px 36px rgba(148, 163, 184, 0.14);
+}
+
+.tg-inspector-preview {
+  height: 220px;
+  border-radius: 22px;
+  background: linear-gradient(135deg, #eff6ff 0%, #e2e8f0 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  color: #2563eb;
+  cursor: pointer;
+}
+
+.tg-inspector-image {
+  width: 100%;
+  height: 100%;
+}
+
+.tg-inspector-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+}
+
+.tg-inspector-fallback.is-video {
+  background: linear-gradient(135deg, #dbeafe 0%, #c7d2fe 100%);
+}
+
+.tg-inspector-title {
+  margin-top: 18px;
+  font-size: 20px;
+  font-weight: 800;
+  color: #0f172a;
+  word-break: break-word;
+}
+
+.tg-inspector-subtitle {
+  margin-top: 8px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #64748b;
+}
+
+.tg-inspector-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.tg-inspector-meta {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tg-inspector-meta-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.tg-inspector-meta-row span:first-child {
+  color: #94a3b8;
+}
+
+.tg-inspector-meta-row span:last-child {
+  color: #0f172a;
+  word-break: break-word;
 }
 
 .pagination-container {
@@ -1513,6 +2009,27 @@ watch(paginatedItems, () => {
 }
 
 @media (max-width: 960px) {
+  .tg-drive-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .tg-filter-rail,
+  .tg-inspector {
+    position: static;
+  }
+
+  .tg-stream-header,
+  .tg-file-row,
+  .desktop-download-meta {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .tg-file-trailing {
+    align-items: flex-start;
+  }
+
   .drive-actions {
     width: 100%;
   }
