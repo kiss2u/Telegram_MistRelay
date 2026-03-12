@@ -42,6 +42,14 @@ struct DesktopTransferResult {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct DesktopDownloadSession {
+    transfer_id: String,
+    file_name: String,
+    local_path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct DesktopPreviewSession {
     transfer_id: String,
     stream_url: String,
@@ -72,24 +80,42 @@ struct TransferProgress {
     error: Option<String>,
 }
 
+#[derive(Clone, Copy)]
+enum TransferKind {
+    Download,
+    Preview,
+}
+
 struct TransferHandle {
     file_name: String,
     source_url: String,
     local_path: PathBuf,
-    complete_marker_path: PathBuf,
+    complete_marker_path: Option<PathBuf>,
+    kind: TransferKind,
     inner: Arc<(Mutex<TransferProgress>, Condvar)>,
     worker_started: AtomicBool,
 }
 
 impl TransferHandle {
-    fn new(file_name: String, source_url: String, local_path: PathBuf) -> Self {
-        let complete_marker_path = PathBuf::from(format!("{}.complete", local_path.display()));
-
+    fn new_download(file_name: String, source_url: String, local_path: PathBuf) -> Self {
         Self {
             file_name,
             source_url,
             local_path,
-            complete_marker_path,
+            complete_marker_path: None,
+            kind: TransferKind::Download,
+            inner: Arc::new((Mutex::new(TransferProgress::default()), Condvar::new())),
+            worker_started: AtomicBool::new(false),
+        }
+    }
+
+    fn new_preview(file_name: String, source_url: String, local_path: PathBuf) -> Self {
+        Self {
+            file_name,
+            source_url,
+            complete_marker_path: Some(PathBuf::from(format!("{}.complete", local_path.display()))),
+            local_path,
+            kind: TransferKind::Preview,
             inner: Arc::new((Mutex::new(TransferProgress::default()), Condvar::new())),
             worker_started: AtomicBool::new(false),
         }
@@ -100,6 +126,8 @@ struct DesktopRuntimeState {
     preview_server_port: u16,
     preview_transfers: Arc<Mutex<HashMap<String, Arc<TransferHandle>>>>,
     preview_sessions: Arc<Mutex<HashMap<String, Arc<TransferHandle>>>>,
+    download_transfers: Arc<Mutex<HashMap<String, Arc<TransferHandle>>>>,
+    download_sessions: Arc<Mutex<HashMap<String, Arc<TransferHandle>>>>,
     next_transfer_id: AtomicU64,
 }
 
@@ -107,6 +135,8 @@ impl DesktopRuntimeState {
     fn new() -> Result<Self, String> {
         let preview_transfers = Arc::new(Mutex::new(HashMap::new()));
         let preview_sessions = Arc::new(Mutex::new(HashMap::new()));
+        let download_transfers = Arc::new(Mutex::new(HashMap::new()));
+        let download_sessions = Arc::new(Mutex::new(HashMap::new()));
         let listener = TcpListener::bind("127.0.0.1:0")
             .map_err(|error| format!("启动本地预览服务失败: {error}"))?;
         let port = listener
@@ -120,6 +150,8 @@ impl DesktopRuntimeState {
             preview_server_port: port,
             preview_transfers,
             preview_sessions,
+            download_transfers,
+            download_sessions,
             next_transfer_id: AtomicU64::new(1),
         })
     }
@@ -298,40 +330,44 @@ fn mark_transfer_failed(handle: &TransferHandle, message: String) {
     }
 }
 
-fn spawn_preview_transfer(handle: Arc<TransferHandle>) {
+fn spawn_transfer(handle: Arc<TransferHandle>) {
     if handle.worker_started.swap(true, Ordering::SeqCst) {
         return;
     }
 
     thread::spawn(move || {
-        if let Err(error) = stream_preview_to_path(&handle) {
+        if let Err(error) = stream_transfer_to_path(&handle) {
             mark_transfer_failed(&handle, error);
         }
     });
 }
 
-fn stream_preview_to_path(handle: &TransferHandle) -> Result<(), String> {
+fn stream_transfer_to_path(handle: &TransferHandle) -> Result<(), String> {
     ensure_parent_dir(&handle.local_path)?;
 
-    if handle.complete_marker_path.exists() && handle.local_path.exists() {
-        let size = fs::metadata(&handle.local_path)
-            .map_err(|error| format!("读取本地预览缓存失败: {error}"))?
-            .len();
-        let (lock, condvar) = &*handle.inner;
-        let mut progress = lock.lock().map_err(|_| "缓存状态已损坏".to_string())?;
-        progress.downloaded_bytes = size;
-        progress.total_bytes = Some(size);
-        progress.complete = true;
-        progress.ready_for_preview = true;
-        condvar.notify_all();
-        return Ok(());
+    if let Some(complete_marker_path) = &handle.complete_marker_path {
+        if complete_marker_path.exists() && handle.local_path.exists() {
+            let size = fs::metadata(&handle.local_path)
+                .map_err(|error| format!("读取本地预览缓存失败: {error}"))?
+                .len();
+            let (lock, condvar) = &*handle.inner;
+            let mut progress = lock.lock().map_err(|_| "缓存状态已损坏".to_string())?;
+            progress.downloaded_bytes = size;
+            progress.total_bytes = Some(size);
+            progress.complete = true;
+            progress.ready_for_preview = true;
+            condvar.notify_all();
+            return Ok(());
+        }
     }
 
     if handle.local_path.exists() {
         let _ = fs::remove_file(&handle.local_path);
     }
-    if handle.complete_marker_path.exists() {
-        let _ = fs::remove_file(&handle.complete_marker_path);
+    if let Some(complete_marker_path) = &handle.complete_marker_path {
+        if complete_marker_path.exists() {
+            let _ = fs::remove_file(complete_marker_path);
+        }
     }
 
     let client = build_http_client()?;
@@ -373,13 +409,15 @@ fn stream_preview_to_path(handle: &TransferHandle) -> Result<(), String> {
         let (lock, condvar) = &*handle.inner;
         let mut progress = lock.lock().map_err(|_| "缓存状态已损坏".to_string())?;
         progress.downloaded_bytes += read as u64;
-        progress.ready_for_preview =
-            progress.complete || progress.downloaded_bytes >= preview_ready_threshold(progress.total_bytes);
+        progress.ready_for_preview = matches!(handle.kind, TransferKind::Preview)
+            && (progress.complete || progress.downloaded_bytes >= preview_ready_threshold(progress.total_bytes));
         condvar.notify_all();
     }
 
-    fs::write(&handle.complete_marker_path, b"ok")
-        .map_err(|error| format!("写入预览完成标记失败: {error}"))?;
+    if let Some(complete_marker_path) = &handle.complete_marker_path {
+        fs::write(complete_marker_path, b"ok")
+            .map_err(|error| format!("写入预览完成标记失败: {error}"))?;
+    }
 
     let final_size = fs::metadata(&handle.local_path)
         .map_err(|error| format!("读取本地预览缓存大小失败: {error}"))?
@@ -392,7 +430,7 @@ fn stream_preview_to_path(handle: &TransferHandle) -> Result<(), String> {
         progress.total_bytes = Some(final_size);
     }
     progress.complete = true;
-    progress.ready_for_preview = true;
+    progress.ready_for_preview = matches!(handle.kind, TransferKind::Preview);
     condvar.notify_all();
 
     Ok(())
@@ -701,13 +739,13 @@ fn apply_saved_proxy<R: tauri::Runtime>(context: &mut tauri::Context<R>) -> Resu
     };
 
     let windows = &mut context.config_mut().app.windows;
-    let target_window = windows
-        .iter_mut()
-        .find(|window| window.label == "main")
-        .or_else(|| windows.first_mut())
+    let idx = windows
+        .iter()
+        .position(|window| window.label == "main")
+        .or_else(|| if windows.is_empty() { None } else { Some(0) })
         .ok_or_else(|| "未找到桌面主窗口配置".to_string())?;
 
-    target_window.proxy_url = Some(proxy_url);
+    windows[idx].proxy_url = Some(proxy_url);
 
     Ok(())
 }
@@ -734,6 +772,60 @@ fn save_desktop_client_config(config: DesktopClientConfig) -> Result<(), String>
 #[tauri::command]
 fn restart_desktop_app(app: tauri::AppHandle) {
     app.request_restart();
+}
+
+#[tauri::command]
+fn desktop_start_download(
+    state: tauri::State<'_, DesktopRuntimeState>,
+    source_url: String,
+    remote: String,
+    remote_path: String,
+    file_name: String,
+) -> Result<DesktopDownloadSession, String> {
+    let relative_path = build_relative_file_path(&remote, &remote_path, &file_name);
+    let destination = downloads_root_dir()?.join(relative_path);
+    let transfer_key = destination.to_string_lossy().to_string();
+
+    let handle = {
+        let mut transfers = state
+            .download_transfers
+            .lock()
+            .map_err(|_| "本地下载状态已损坏".to_string())?;
+
+        if let Some(existing) = transfers.get(&transfer_key) {
+            Arc::clone(existing)
+        } else {
+            let handle = Arc::new(TransferHandle::new_download(
+                file_name.clone(),
+                source_url,
+                destination.clone(),
+            ));
+            transfers.insert(transfer_key, Arc::clone(&handle));
+            handle
+        }
+    };
+
+    spawn_transfer(Arc::clone(&handle));
+
+    let transfer_id = format!(
+        "{}-{}",
+        std::process::id(),
+        state.next_transfer_id.fetch_add(1, Ordering::SeqCst)
+    );
+
+    {
+        let mut sessions = state
+            .download_sessions
+            .lock()
+            .map_err(|_| "本地下载会话已损坏".to_string())?;
+        sessions.insert(transfer_id.clone(), Arc::clone(&handle));
+    }
+
+    Ok(DesktopDownloadSession {
+        transfer_id,
+        file_name,
+        local_path: destination.to_string_lossy().to_string(),
+    })
 }
 
 #[tauri::command]
@@ -803,7 +895,7 @@ fn desktop_start_preview_stream(
         if let Some(existing) = transfers.get(&transfer_key) {
             Arc::clone(existing)
         } else {
-            let handle = Arc::new(TransferHandle::new(
+            let handle = Arc::new(TransferHandle::new_preview(
                 file_name.clone(),
                 source_url,
                 destination.clone(),
@@ -813,7 +905,7 @@ fn desktop_start_preview_stream(
         }
     };
 
-    spawn_preview_transfer(Arc::clone(&handle));
+    spawn_transfer(Arc::clone(&handle));
 
     let transfer_id = format!(
         "{}-{}",
@@ -845,14 +937,24 @@ fn desktop_get_transfer_status(
     transfer_id: String,
 ) -> Result<DesktopTransferStatus, String> {
     let handle = {
-        let sessions = state
+        let preview_handle = state
             .preview_sessions
             .lock()
-            .map_err(|_| "本地预览会话已损坏".to_string())?;
-        sessions
+            .map_err(|_| "本地预览会话已损坏".to_string())?
             .get(&transfer_id)
-            .cloned()
-            .ok_or_else(|| "未找到本地预览任务".to_string())?
+            .cloned();
+
+        if let Some(handle) = preview_handle {
+            handle
+        } else {
+            state
+                .download_sessions
+                .lock()
+                .map_err(|_| "本地下载会话已损坏".to_string())?
+                .get(&transfer_id)
+                .cloned()
+                .ok_or_else(|| "未找到桌面传输任务".to_string())?
+        }
     };
 
     snapshot_transfer_status(&transfer_id, &handle)
@@ -875,6 +977,7 @@ fn main() {
             get_desktop_client_config,
             save_desktop_client_config,
             restart_desktop_app,
+            desktop_start_download,
             desktop_download_file,
             desktop_prepare_preview_file,
             desktop_start_preview_stream,
