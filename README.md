@@ -141,13 +141,78 @@ volumes:
   - /var/run/docker.sock:/var/run/docker.sock
 ```
 
+## 🖥️ 桌面客户端
+
+MistRelay 提供独立的 Windows 桌面客户端，基于 Tauri 2 构建，支持：
+
+- **本地文件下载**: 文件直接保存到本地下载目录
+- **视频流预览**: 边下载边预览，无需等待下载完成
+- **自动更新**: 内置 updater，检测到新版本后一键更新重启
+- **代理支持**: 桌面端独立代理配置（HTTP/SOCKS5）
+
+### 项目结构
+
+```
+MistRelay/
+├── web/                  # Web 前端（纯浏览器，独立开发）
+├── desktop/              # 桌面客户端（完全独立）
+│   ├── frontend/         # 桌面端 Vue 前端
+│   │   ├── src/          # 桌面专属前端源码
+│   │   ├── vite.config.ts
+│   │   └── index.html
+│   ├── src/main.rs       # Tauri Rust 后端
+│   ├── tauri.conf.json   # Tauri 配置
+│   ├── Cargo.toml
+│   └── package.json      # 桌面端全部依赖
+├── dev-scripts/          # 开发辅助脚本
+└── .github/workflows/    # CI/CD
+```
+
+`web/` 和 `desktop/` 完全独立，各自拥有独立的前端源码、依赖和构建流程，互不影响。
+
+### 安装
+
+前往 [Releases](https://github.com/qianlong520/Telegram_MistRelay/releases) 下载最新的 Windows 安装包。
+
+### 桌面端开发
+
+```bash
+cd desktop
+npm install
+npm run dev
+```
+
+### 桌面端构建
+
+```bash
+cd desktop
+npm run build
+```
+
+构建时需设置签名环境变量：
+
+```bash
+export TAURI_SIGNING_PRIVATE_KEY_PATH="/path/to/MistRelay.key"
+export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
+```
+
+### CI 自动构建
+
+推送 `v*` 或 `desktop-v*` tag 会自动触发 GitHub Actions 构建 Windows 安装包并创建 Release。
+
+```bash
+git tag -a v0.1.1 -m "v0.1.1"
+git push origin v0.1.1
+```
+
 ## 💻 开发者指南
 
 如果您想参与开发或进行二次开发，请参考以下信息。
 
 ### 架构概述
 - **后端**: Python + aiohttp (Port 8080)
-- **前端**: Vue3 + Vite + Element Plus (Dev Port 5173)
+- **Web 前端**: Vue3 + Vite + Element Plus (Dev Port 5173)
+- **桌面客户端**: Tauri 2 + Vue3（独立前端 + Rust 原生能力）
 
 ### 开发模式启动
 使用 `start-dev.sh` 脚本可一键启动前后端分离的开发环境：
@@ -167,6 +232,19 @@ Dockerfile 使用多阶段构建：
 2. `python` 阶段通过 aiohttp 提供 API 服务，并将 `/` 路由指向前端 `index.html`。
 
 ## 📝 更新日志
+
+### [0.1.1] - 2026-03-12 (桌面客户端独立 & 自动更新)
+- **🖥️ 桌面客户端独立**:
+  - 桌面端从 `web/` 完全分离为独立 `desktop/` 项目。
+  - 桌面端拥有独立的 Vue 前端源码、依赖和构建流程。
+  - `web/` 不再包含任何 Tauri/桌面相关代码。
+- **🔄 自动更新**:
+  - 集成 `tauri-plugin-updater`，支持检查更新、下载安装和自动重启。
+  - 设置页面新增"软件更新"区域，显示当前版本和下载进度。
+  - CI 自动生成签名安装包和 `latest.json` 更新清单。
+- **🏗️ CI/CD**:
+  - GitHub Actions 工作流适配独立桌面项目结构。
+  - 推送 `v*` 或 `desktop-v*` tag 自动构建 Windows 安装包并发布 Release。
 
 ### [1.3.0] - 2026-01-28 (数据一致性优化)
 - **🔧 数据一致性增强**:

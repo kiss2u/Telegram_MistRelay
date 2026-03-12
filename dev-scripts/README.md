@@ -50,17 +50,18 @@
 **功能**:
 - 创建并推送 `desktop-v<version>` tag
 - 在 `windows-latest` Runner 上编译 Tauri Windows 客户端
-- 构建完成后自动创建 GitHub Release
-- 自动下载 `.exe`/安装包产物到本地目录
+- 构建完成后自动创建 GitHub Release（含签名安装包和 `latest.json` 更新清单）
+- 自动下载 `.exe` 安装包产物到本地目录
 
 **前置条件**:
 - 已安装并登录 `gh` (`gh auth login`)
 - 仓库已推送到 GitHub
+- 仓库 Settings > Secrets 中已设置 `TAURI_SIGNING_PRIVATE_KEY`
 - 需要先把要构建的代码提交并推送到目标分支/提交
 
 **使用方法**:
 ```bash
-./dev-scripts/build-windows-client.sh 0.1.0
+./dev-scripts/build-windows-client.sh 0.1.1
 ```
 
 可选参数:
@@ -70,9 +71,12 @@
 
 **发布结果**:
 - 自动创建 `desktop-v<version>` 的 GitHub Release
-- 自动上传 Windows 安装包到 Release
+- 自动上传 Windows 签名安装包（`.exe` + `.exe.sig`）和 `latest.json` 到 Release
 - 自动将该 Release 标记为 `latest`
 - 自动生成按分类整理的 Release Notes
+- 桌面客户端的 updater 会自动从 `latest.json` 检查更新
+
+> 也可以直接推送 `v*` tag（如 `v0.1.1`）触发同一工作流。
 
 ---
 
@@ -93,5 +97,14 @@ docker compose logs -f
 
 根目录的 `start.sh` 是Docker容器内部使用的启动脚本,无需手动执行。
 
-Windows 桌面客户端不通过 `docker compose up -d --build` 生成。
-客户端由 `.github/workflows/build-windows-desktop.yml` 在 `desktop-v*` tag 推送后由 Windows Runner 单独构建。
+## 桌面客户端
+
+桌面客户端是完全独立的项目，位于 `desktop/` 目录，拥有独立的前端源码和 Rust 后端。
+不通过 `docker compose` 生成，而是由 `.github/workflows/build-windows-desktop.yml` 在 `v*` 或 `desktop-v*` tag 推送后由 Windows Runner 自动构建。
+
+桌面端本地开发：
+```bash
+cd desktop
+npm install
+npm run dev
+```
