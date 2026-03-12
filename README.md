@@ -196,6 +196,12 @@ export TAURI_SIGNING_PRIVATE_KEY_PATH="/path/to/MistRelay.key"
 export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
 ```
 
+GitHub Actions 中的 `TAURI_SIGNING_PRIVATE_KEY` 必须填写 `MistRelay.key` 私钥文件内容本身。
+不要填写：
+- `tauri.conf.json` 里的 updater `pubkey`
+- 私钥文件路径
+- 带空格拆开的 base64 字符串
+
 ### CI 自动构建
 
 推送 `v*` 或 `desktop-v*` tag 会自动触发 GitHub Actions 构建 Windows 安装包并创建 Release。

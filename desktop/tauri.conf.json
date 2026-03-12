@@ -45,7 +45,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEJDNEUzQkJERkI1RTYyQkMKUldTOFlsNzd2VHRPdkY1RzZYRmZBRyt0blh5ZmVxcWNhL1lmQlAzUE41ekphNnA2U3BvSU9BSnMK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDU4N0IwNDc1OTVDODlCRTEKUldUaG04aVZkUVI3V0tRSVdmaFFQUE5ycFdMYVk0SmFJOHVaS0ZxRlhQY2RERFlVUEhUWi9OZjYK",
       "endpoints": [
         "https://github.com/qianlong520/Telegram_MistRelay/releases/latest/download/latest.json"
       ]

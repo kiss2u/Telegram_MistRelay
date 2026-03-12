@@ -59,6 +59,9 @@
 - 仓库 Settings > Secrets 中已设置 `TAURI_SIGNING_PRIVATE_KEY`
 - 需要先把要构建的代码提交并推送到目标分支/提交
 
+`TAURI_SIGNING_PRIVATE_KEY` 需要填入 `tauri signer generate` 生成的私钥文件内容本身。
+不要填 updater 的 `pubkey`、文件路径或被空格打断的 base64 文本。
+
 **使用方法**:
 ```bash
 ./dev-scripts/build-windows-client.sh 0.1.1
