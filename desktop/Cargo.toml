@@ -5,6 +5,11 @@ description = "MistRelay desktop shell"
 authors = ["Codex"]
 edition = "2021"
 
+[profile.release]
+lto = "thin"
+codegen-units = 4
+strip = true
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
