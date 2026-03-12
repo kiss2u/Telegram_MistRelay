@@ -85,6 +85,28 @@ _AUTH_WHITELIST_PREFIXES = (
 )
 
 
+def _apply_cors_headers(request: web.Request, response: web.StreamResponse) -> web.StreamResponse:
+    origin = request.headers.get("Origin")
+
+    response.headers["Access-Control-Allow-Origin"] = origin or "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, Accept, Origin, X-Requested-With"
+    response.headers["Access-Control-Expose-Headers"] = "Content-Disposition, Content-Length"
+    response.headers["Access-Control-Max-Age"] = "86400"
+    response.headers["Vary"] = "Origin"
+    return response
+
+
+@web.middleware
+async def cors_middleware(request, handler):
+    """为桌面端和独立前端提供跨域访问支持。"""
+    if request.method == "OPTIONS":
+        return _apply_cors_headers(request, web.Response(status=204))
+
+    response = await handler(request)
+    return _apply_cors_headers(request, response)
+
+
 @web.middleware
 async def auth_middleware(request, handler):
     """JWT 认证中间件。保护所有 /api/ 路径（白名单除外）。"""
@@ -119,7 +141,8 @@ def web_server():
     logging.getLogger("aiohttp.access").addFilter(_SuppressConnectAccessFilter())
     web_app = web.Application(client_max_size=30000000)
     
-    # 添加中间件(顺序很重要：先错误处理，再认证，最后压缩)
+    # 添加中间件(顺序很重要：先 CORS，再压缩、认证、错误处理)
+    web_app.middlewares.append(cors_middleware)
     web_app.middlewares.append(compression_middleware)
     web_app.middlewares.append(auth_middleware)
     web_app.middlewares.append(error_handler_middleware)

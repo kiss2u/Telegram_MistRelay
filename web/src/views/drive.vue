@@ -299,6 +299,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { HomeFilled, Document, Folder, Search, List, Grid, Picture, VideoPlay, Sort, Download, Delete, RefreshRight } from '@element-plus/icons-vue'
 import { getRcloneRemotes, browseDrive, getThumbnail, deleteFile, getDriveUsage, type RcloneRemote, type DriveItem, type DriveUsageResponse } from '@/api'
 import VideoPlayer from '@/components/VideoPlayer.vue'
+import { buildAuthorizedApiUrl } from '@/utils/runtime'
 
 interface RemoteUsageState {
   response?: DriveUsageResponse
@@ -677,10 +678,11 @@ function handleRemoteChange() {
 function handleDownload(item: DriveItem) {
   if (item.isDir) return
   
-  const token = localStorage.getItem('token') || ''
-  const protocol = window.location.protocol
-  const host = window.location.host
-  const url = `${protocol}//${host}/api/rclone/file?remote=${currentRemote.value}&path=${encodeURIComponent(item.path)}&download=true&token=${encodeURIComponent(token)}`
+  const url = buildAuthorizedApiUrl('/api/rclone/file', {
+    remote: currentRemote.value,
+    path: item.path,
+    download: true,
+  })
   
   window.open(url, '_blank')
 }
@@ -733,18 +735,18 @@ function handleRowClick(row: DriveItem) {
     if (isImage(row.name)) {
       previewType.value = 'image'
       previewItem.value = row
-      const token = localStorage.getItem('token') || ''
-      const protocol = window.location.protocol
-      const host = window.location.host
-      previewUrl.value = `${protocol}//${host}/api/rclone/file?remote=${currentRemote.value}&path=${encodeURIComponent(row.path)}&token=${encodeURIComponent(token)}`
+      previewUrl.value = buildAuthorizedApiUrl('/api/rclone/file', {
+        remote: currentRemote.value,
+        path: row.path,
+      })
       showPreview.value = true
     } else if (isVideo(row.name)) {
       previewType.value = 'video'
       previewItem.value = row
-      const token = localStorage.getItem('token') || ''
-      const protocol = window.location.protocol
-      const host = window.location.host
-      previewUrl.value = `${protocol}//${host}/api/rclone/file?remote=${currentRemote.value}&path=${encodeURIComponent(row.path)}&token=${encodeURIComponent(token)}`
+      previewUrl.value = buildAuthorizedApiUrl('/api/rclone/file', {
+        remote: currentRemote.value,
+        path: row.path,
+      })
       showPreview.value = true
     } else {
       ElMessage.info('暂不支持预览此类型文件')

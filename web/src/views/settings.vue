@@ -10,6 +10,62 @@
     </div>
 
     <el-tabs v-model="activeTab" type="border-card">
+      <el-tab-pane label="客户端连接" name="client">
+        <el-card shadow="hover">
+          <template #header>
+            <div class="card-header">
+              <span>客户端连接配置</span>
+              <div class="card-actions">
+                <el-button @click="testConnection" :loading="testingConnection">
+                  测试连接
+                </el-button>
+                <el-button type="primary" @click="saveClientConnection" :loading="savingClientConnection">
+                  保存并应用
+                </el-button>
+              </div>
+            </div>
+          </template>
+
+          <el-alert
+            :title="isDesktopClient ? '桌面端只负责展示 UI，所有逻辑仍运行在服务器。' : '浏览器端可选择同源访问，也可以指定远程服务器。'"
+            type="info"
+            :closable="false"
+            style="margin-bottom: 20px"
+          />
+
+          <el-form label-width="180px">
+            <el-form-item label="客户端类型">
+              <el-tag :type="isDesktopClient ? 'success' : 'info'">
+                {{ isDesktopClient ? '桌面客户端' : '浏览器客户端' }}
+              </el-tag>
+            </el-form-item>
+            <el-form-item label="服务器地址">
+              <el-input
+                v-model="clientServerUrl"
+                placeholder="https://mistrelay.example.com"
+                clearable
+              />
+              <div class="el-form-item__help">
+                桌面端必须填写；浏览器端留空时继续使用当前同源服务。
+              </div>
+            </el-form-item>
+            <el-form-item label="当前生效地址">
+              <el-input :model-value="effectiveServerUrlLabel" readonly />
+            </el-form-item>
+            <el-form-item label="连接状态">
+              <div class="connection-status">
+                <el-tag :type="connectionStatusTagType">
+                  {{ connectionStatusLabel }}
+                </el-tag>
+                <span v-if="connectionStatusText" class="connection-status-text">
+                  {{ connectionStatusText }}
+                </span>
+              </div>
+            </el-form-item>
+          </el-form>
+        </el-card>
+      </el-tab-pane>
+
       <!-- Telegram配置 -->
       <el-tab-pane label="Telegram配置" name="telegram">
         <el-card shadow="hover">
@@ -371,10 +427,22 @@
 import { ref, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getConfig, updateConfig, reloadConfig, getRcloneConfig, saveRcloneConfig, getRcloneRemotes, type RcloneRemote } from '@/api'
+import { useAuthStore } from '@/stores/auth'
+import { checkServerConnection } from '@/utils/connection'
+import { getServerBaseUrl, isDesktopShell, isValidServerBaseUrl, setServerBaseUrl } from '@/utils/runtime'
+import { useRouter } from 'vue-router'
 
-const activeTab = ref('telegram')
+const router = useRouter()
+const authStore = useAuthStore()
+const activeTab = ref('client')
 const saving = ref(false)
 const reloading = ref(false)
+const isDesktopClient = isDesktopShell()
+const clientServerUrl = ref(getServerBaseUrl())
+const testingConnection = ref(false)
+const savingClientConnection = ref(false)
+const connectionState = ref<'idle' | 'success' | 'error'>('idle')
+const connectionStatusText = ref('')
 
 // Rclone 配置文件管理相关状态
 const rcloneConfigContent = ref('')
@@ -385,6 +453,18 @@ const rcloneConfigLastSaved = ref('')
 
 // Rclone remotes 列表
 const availableRemotes = ref<RcloneRemote[]>([])
+
+const effectiveServerUrlLabel = computed(() => clientServerUrl.value || '同源 /api')
+const connectionStatusLabel = computed(() => {
+  if (connectionState.value === 'success') return '已连接'
+  if (connectionState.value === 'error') return '不可用'
+  return '未检测'
+})
+const connectionStatusTagType = computed(() => {
+  if (connectionState.value === 'success') return 'success'
+  if (connectionState.value === 'error') return 'danger'
+  return 'info'
+})
 
 // 配置数据
 const configs = ref({
@@ -465,6 +545,80 @@ const rules = {
   API_HASH: [{ required: true, message: '请输入API Hash', trigger: 'blur' }],
   BOT_TOKEN: [{ required: true, message: '请输入Bot Token', trigger: 'blur' }],
   ADMIN_ID: [{ required: true, message: '请输入管理员ID', trigger: 'blur' }]
+}
+
+async function testConnection(showMessage = true) {
+  if (!clientServerUrl.value && isDesktopClient) {
+    connectionState.value = 'error'
+    connectionStatusText.value = '桌面端必须填写服务器地址'
+    if (showMessage) {
+      ElMessage.error(connectionStatusText.value)
+    }
+    return false
+  }
+
+  if (!isValidServerBaseUrl(clientServerUrl.value)) {
+    connectionState.value = 'error'
+    connectionStatusText.value = '服务器地址格式不正确'
+    if (showMessage) {
+      ElMessage.error(connectionStatusText.value)
+    }
+    return false
+  }
+
+  testingConnection.value = true
+  try {
+    const result = await checkServerConnection(clientServerUrl.value)
+    connectionState.value = result.ok ? 'success' : 'error'
+    connectionStatusText.value = result.message
+
+    if (showMessage) {
+      if (result.ok) {
+        ElMessage.success(result.message)
+      } else {
+        ElMessage.error(result.message)
+      }
+    }
+
+    return result.ok
+  } finally {
+    testingConnection.value = false
+  }
+}
+
+async function saveClientConnection() {
+  if (!clientServerUrl.value && isDesktopClient) {
+    ElMessage.error('桌面端必须填写服务器地址')
+    return
+  }
+
+  if (!isValidServerBaseUrl(clientServerUrl.value)) {
+    ElMessage.error('服务器地址格式不正确')
+    return
+  }
+
+  savingClientConnection.value = true
+  try {
+    const ok = await testConnection(false)
+    if (!ok) {
+      ElMessage.error(connectionStatusText.value || '服务器连接失败，未保存')
+      return
+    }
+
+    const previousServerUrl = getServerBaseUrl()
+    const nextServerUrl = setServerBaseUrl(clientServerUrl.value)
+
+    if (nextServerUrl !== previousServerUrl) {
+      authStore.logout()
+      ElMessage.success('客户端连接已更新，请重新登录')
+      router.push('/login')
+      return
+    }
+
+    ElMessage.success('客户端连接已保存')
+  } finally {
+    savingClientConnection.value = false
+  }
 }
 
 async function fetchConfigs() {
@@ -650,6 +804,7 @@ async function loadRcloneRemotes() {
 
 onMounted(() => {
   fetchConfigs()
+  void testConnection(false)
   // 自动加载 Rclone 配置文件
   loadRcloneConfigFile()
   // 自动加载 Rclone remotes 列表
@@ -676,6 +831,18 @@ onMounted(() => {
 
 .card-header {
   @apply flex items-center justify-between;
+}
+
+.card-actions {
+  @apply flex items-center gap-3;
+}
+
+.connection-status {
+  @apply flex items-center gap-3;
+}
+
+.connection-status-text {
+  @apply text-sm text-gray-500;
 }
 
 .quick-actions {

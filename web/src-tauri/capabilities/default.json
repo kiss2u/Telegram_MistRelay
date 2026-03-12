@@ -1,0 +1,10 @@
+{
+  "identifier": "default",
+  "description": "Default capability for the MistRelay desktop window",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default"
+  ]
+}

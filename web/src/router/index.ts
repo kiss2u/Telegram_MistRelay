@@ -1,6 +1,7 @@
-import { createRouter, createWebHistory } from 'vue-router'
+import { createRouter, createWebHashHistory, createWebHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { shouldUseHashHistory } from '@/utils/runtime'
 
 const routes: RouteRecordRaw[] = [
   {
@@ -50,7 +51,7 @@ const routes: RouteRecordRaw[] = [
 ]
 
 export const router = createRouter({
-  history: createWebHistory(),
+  history: shouldUseHashHistory() ? createWebHashHistory() : createWebHistory(),
   routes
 })
 

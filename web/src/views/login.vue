@@ -42,6 +42,14 @@
             @keyup.enter="handleLogin"
           />
         </el-form-item>
+        <el-form-item prop="serverUrl">
+          <el-input
+            v-model="form.serverUrl"
+            placeholder="服务器地址，示例: https://mistrelay.example.com"
+            size="large"
+            :prefix-icon="Link"
+          />
+        </el-form-item>
         <el-form-item>
           <el-button
             type="primary"
@@ -54,31 +62,80 @@
           </el-button>
         </el-form-item>
       </el-form>
+
+      <p class="server-hint">
+        {{ serverHint }}
+      </p>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
+import { computed, ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, type FormInstance } from 'element-plus'
-import { User, Lock, Monitor } from '@element-plus/icons-vue'
+import { User, Lock, Monitor, Link } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
+import {
+  getDefaultServerBaseUrl,
+  getServerBaseUrl,
+  isDesktopShell,
+  isValidServerBaseUrl,
+  normalizeServerBaseUrl,
+  setServerBaseUrl,
+} from '@/utils/runtime'
 
 const router = useRouter()
 const authStore = useAuthStore()
 const formRef = ref<FormInstance>()
 const loading = ref(false)
+const desktopShell = isDesktopShell()
 
 const form = reactive({
   username: '',
   password: '',
+  serverUrl: getServerBaseUrl() || getDefaultServerBaseUrl(),
 })
 
 const rules = {
   username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
   password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
+  serverUrl: [{
+    validator: (_rule: unknown, value: string, callback: (error?: Error) => void) => {
+      if (!value && desktopShell) {
+        callback(new Error('桌面端需要填写服务器地址'))
+        return
+      }
+
+      if (!value) {
+        callback()
+        return
+      }
+
+      const normalized = normalizeServerBaseUrl(value)
+      if (!/^https?:\/\//i.test(normalized) && !normalized.startsWith('/')) {
+        callback(new Error('服务器地址必须是 http(s) 地址'))
+        return
+      }
+
+      if (!isValidServerBaseUrl(normalized)) {
+        callback(new Error('服务器地址格式不正确'))
+        return
+      }
+
+      callback()
+    },
+    trigger: 'blur'
+  }],
 }
+
+const serverHint = computed(() => {
+  if (desktopShell) {
+    return '桌面端会直接连接远程 MistRelay 服务，所有下载与上传逻辑都运行在服务器。'
+  }
+
+  return '浏览器模式可留空走同源服务，也可以填写远程服务器地址。'
+})
 
 async function handleLogin() {
   if (!formRef.value) return
@@ -87,6 +144,7 @@ async function handleLogin() {
 
   loading.value = true
   try {
+    setServerBaseUrl(form.serverUrl)
     await authStore.login(form.username, form.password)
     ElMessage.success('登录成功')
     router.replace('/')
@@ -198,6 +256,13 @@ async function handleLogin() {
 
 .login-form :deep(.el-input__wrapper:hover) {
   box-shadow: 0 0 0 1px var(--color-primary) inset;
+}
+
+.server-hint {
+  margin: 4px 4px 0;
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .login-btn {

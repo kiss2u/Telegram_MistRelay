@@ -10,9 +10,15 @@ import type {
   SystemResourcesResponse,
   UploadRecord
 } from '@/types/api'
+import {
+  clearAuthToken,
+  getApiBaseUrl,
+  getAuthToken,
+  redirectToLogin,
+  resolveServerUrl,
+} from '@/utils/runtime'
 
-const api = axios.create({
-  baseURL: '/api',
+export const api = axios.create({
   timeout: 60000,
   headers: {
     'Content-Type': 'application/json'
@@ -20,7 +26,9 @@ const api = axios.create({
 })
 
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token')
+  config.baseURL = getApiBaseUrl()
+
+  const token = getAuthToken()
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
   }
@@ -31,9 +39,10 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      localStorage.removeItem('token')
-      if (window.location.pathname !== '/login') {
-        window.location.href = '/login'
+      clearAuthToken()
+      const isLoginRoute = window.location.pathname === '/login' || window.location.hash.startsWith('#/login')
+      if (!isLoginRoute) {
+        redirectToLogin()
       }
     }
     return Promise.reject(error)
@@ -317,7 +326,12 @@ export interface ThumbnailResponse {
 export function getThumbnail(remote: string, path: string, type: string, dir?: string, id?: string): Promise<ThumbnailResponse> {
   return api.get<ThumbnailResponse>('/rclone/thumbnail', {
     params: { remote, path, type, dir, id }
-  }).then(response => response.data)
+  }).then(response => ({
+    ...response.data,
+    thumbnail_url: response.data.thumbnail_url
+      ? resolveServerUrl(response.data.thumbnail_url)
+      : response.data.thumbnail_url
+  }))
 }
 
 export interface DeleteFileResponse {
@@ -372,8 +386,10 @@ export function getLogContent(params: {
 }
 
 export function getLogDownloadUrl(filename: string): string {
-  const token = localStorage.getItem('token') || ''
-  return `/api/logs/download/${encodeURIComponent(filename)}?token=${encodeURIComponent(token)}`
+  const token = getAuthToken()
+  return resolveServerUrl(
+    `/api/logs/download/${encodeURIComponent(filename)}?token=${encodeURIComponent(token)}`
+  )
 }
 
 // ==================== 用户认证 API ====================

@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
-import axios from 'axios'
+import { api } from '@/api'
+import { clearAuthToken, getAuthToken, setAuthToken } from '@/utils/runtime'
 
 interface UserInfo {
   id: number
@@ -14,7 +15,7 @@ interface AuthState {
 
 export const useAuthStore = defineStore('auth', {
   state: (): AuthState => ({
-    token: localStorage.getItem('token'),
+    token: getAuthToken(),
     user: null,
   }),
   getters: {
@@ -22,17 +23,17 @@ export const useAuthStore = defineStore('auth', {
   },
   actions: {
     async login(username: string, password: string) {
-      const { data } = await axios.post('/api/auth/login', { username, password })
+      const { data } = await api.post('/auth/login', { username, password })
       if (!data.success) throw new Error(data.error || '登录失败')
       this.token = data.token
       this.user = data.user
-      localStorage.setItem('token', data.token)
+      setAuthToken(data.token)
     },
 
     async fetchUser() {
       if (!this.token) return
       try {
-        const { data } = await axios.get('/api/auth/me', {
+        const { data } = await api.get('/auth/me', {
           headers: { Authorization: `Bearer ${this.token}` },
         })
         if (data.success) {
@@ -48,7 +49,7 @@ export const useAuthStore = defineStore('auth', {
     logout() {
       this.token = null
       this.user = null
-      localStorage.removeItem('token')
+      clearAuthToken()
     },
   },
 })

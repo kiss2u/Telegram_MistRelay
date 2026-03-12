@@ -16,6 +16,14 @@
       
       <!-- 右侧:用户信息 -->
       <div class="header-right">
+        <div class="connection-pill" @click="router.push('/settings')">
+          <span class="connection-dot" :class="connectionStatusClass"></span>
+          <div class="connection-copy">
+            <span class="connection-title">{{ connectionTitle }}</span>
+            <span class="connection-subtitle">{{ connectionSubtitle }}</span>
+          </div>
+        </div>
+
         <el-dropdown trigger="click" @command="handleCommand" placement="bottom-end" class="user-dropdown">
           <div class="user-info">
             <el-avatar :size="40" class="avatar">
@@ -65,20 +73,37 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, reactive, onMounted } from 'vue'
+import { computed, ref, reactive, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, type FormInstance } from 'element-plus'
 import { User, ArrowDown, SwitchButton, HomeFilled, Lock } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { changePassword } from '@/api'
+import { checkServerConnection } from '@/utils/connection'
+import { getServerBaseUrl, isDesktopShell } from '@/utils/runtime'
 
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
+const isDesktopClient = isDesktopShell()
+const connectionState = ref<'idle' | 'success' | 'error'>('idle')
+const connectionMessage = ref('正在检查连接')
+let connectionTimer: number | null = null
 
 onMounted(() => {
   if (!authStore.user) {
     authStore.fetchUser()
+  }
+
+  void refreshConnectionStatus()
+  connectionTimer = window.setInterval(() => {
+    void refreshConnectionStatus()
+  }, 30000)
+})
+
+onUnmounted(() => {
+  if (connectionTimer !== null) {
+    window.clearInterval(connectionTimer)
   }
 })
 
@@ -92,6 +117,38 @@ const breadcrumb = computed(() => {
   }
   return routeMap[route.path]
 })
+
+const connectionTitle = computed(() => {
+  const serverBaseUrl = getServerBaseUrl()
+
+  if (!serverBaseUrl) {
+    return isDesktopClient ? '未配置服务器' : '同源服务'
+  }
+
+  try {
+    return new URL(serverBaseUrl).host
+  } catch {
+    return serverBaseUrl
+  }
+})
+
+const connectionSubtitle = computed(() => {
+  if (connectionState.value === 'success') return '服务器在线'
+  if (connectionState.value === 'error') return connectionMessage.value
+  return '检查连接中'
+})
+
+const connectionStatusClass = computed(() => {
+  if (connectionState.value === 'success') return 'connection-dot--success'
+  if (connectionState.value === 'error') return 'connection-dot--error'
+  return 'connection-dot--idle'
+})
+
+async function refreshConnectionStatus() {
+  const result = await checkServerConnection()
+  connectionState.value = result.ok ? 'success' : 'error'
+  connectionMessage.value = result.message
+}
 
 // 修改密码
 const passwordDialogVisible = ref(false)
@@ -227,6 +284,68 @@ function handleCommand(command: string) {
 .header-right {
   @apply flex items-center gap-3;
   flex-shrink: 0;
+}
+
+.connection-pill {
+  @apply flex items-center gap-3;
+  min-width: 220px;
+  padding: 8px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(229, 231, 235, 0.9);
+  background: rgba(255, 255, 255, 0.82);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.connection-pill:hover {
+  border-color: rgba(102, 126, 234, 0.25);
+  box-shadow: 0 8px 20px rgba(102, 126, 234, 0.08);
+  transform: translateY(-1px);
+}
+
+.connection-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 6px rgba(148, 163, 184, 0.12);
+}
+
+.connection-dot--success {
+  background: #10b981;
+  box-shadow: 0 0 0 6px rgba(16, 185, 129, 0.12);
+}
+
+.connection-dot--error {
+  background: #ef4444;
+  box-shadow: 0 0 0 6px rgba(239, 68, 68, 0.12);
+}
+
+.connection-dot--idle {
+  background: #f59e0b;
+  box-shadow: 0 0 0 6px rgba(245, 158, 11, 0.12);
+}
+
+.connection-copy {
+  @apply flex flex-col;
+  min-width: 0;
+}
+
+.connection-title {
+  @apply text-sm font-semibold text-gray-800;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.connection-subtitle {
+  @apply text-xs text-gray-500;
+  line-height: 1.2;
+  margin-top: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .user-dropdown {

@@ -3,12 +3,24 @@
  * 用于连接服务器并接收实时状态更新
  */
 
+import { getAuthToken, getServerBaseUrl } from '@/utils/runtime'
+
 export function buildWsUrl(path: string, extraParams: Record<string, string> = {}): string {
+  const token = getAuthToken()
+  const params = new URLSearchParams({ token, ...extraParams })
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`
+  const serverBaseUrl = getServerBaseUrl()
+
+  if (serverBaseUrl) {
+    const url = new URL(normalizedPath, `${serverBaseUrl}/`)
+    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+    url.search = params.toString()
+    return url.toString()
+  }
+
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   const host = window.location.host
-  const token = localStorage.getItem('token') || ''
-  const params = new URLSearchParams({ token, ...extraParams })
-  return `${protocol}//${host}${path}?${params.toString()}`
+  return `${protocol}//${host}${normalizedPath}?${params.toString()}`
 }
 
 export type WSMessageType = 

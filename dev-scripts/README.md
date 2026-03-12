@@ -45,6 +45,37 @@
 
 ---
 
+### 4. build-windows-client.sh
+**用途**: 触发 GitHub Actions 的 Windows 客户端构建并下载产物  
+**功能**:
+- 创建并推送 `desktop-v<version>` tag
+- 在 `windows-latest` Runner 上编译 Tauri Windows 客户端
+- 构建完成后自动创建 GitHub Release
+- 自动下载 `.exe`/安装包产物到本地目录
+
+**前置条件**:
+- 已安装并登录 `gh` (`gh auth login`)
+- 仓库已推送到 GitHub
+- 需要先把要构建的代码提交并推送到目标分支/提交
+
+**使用方法**:
+```bash
+./dev-scripts/build-windows-client.sh 0.1.0
+```
+
+可选参数:
+```bash
+./dev-scripts/build-windows-client.sh <version> <remote> <download-dir>
+```
+
+**发布结果**:
+- 自动创建 `desktop-v<version>` 的 GitHub Release
+- 自动上传 Windows 安装包到 Release
+- 自动将该 Release 标记为 `latest`
+- 自动生成按分类整理的 Release Notes
+
+---
+
 ## 生产环境
 
 生产环境请使用根目录的标准Docker命令:
@@ -61,3 +92,6 @@ docker compose logs -f
 ```
 
 根目录的 `start.sh` 是Docker容器内部使用的启动脚本,无需手动执行。
+
+Windows 桌面客户端不通过 `docker compose up -d --build` 生成。
+客户端由 `.github/workflows/build-windows-desktop.yml` 在 `desktop-v*` tag 推送后由 Windows Runner 单独构建。

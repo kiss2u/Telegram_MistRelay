@@ -72,6 +72,46 @@ npm run build
 
 构建产物将输出到 `dist/` 目录，并自动进行代码分割优化。
 
+## 桌面端
+
+项目已预置 `Tauri 2` 桌面壳骨架，客户端只负责展示 UI，所有业务逻辑继续运行在服务器。
+
+### 桌面端开发
+
+```bash
+npm install
+npm run desktop:dev
+```
+
+### 桌面端构建
+
+```bash
+npm run desktop:build
+```
+
+### Windows 客户端构建
+
+Windows 安装包通过仓库内的 GitHub Actions 工作流 `.github/workflows/build-windows-desktop.yml` 构建。
+该工作流由 `desktop-v*` tag 推送自动触发。
+
+如果本地已安装 GitHub CLI，可直接使用：
+
+```bash
+./dev-scripts/build-windows-client.sh 0.1.0
+```
+
+该脚本会创建并推送 `desktop-v0.1.0` 这样的发布 tag，在 Windows Runner 上完成构建，并在完成后把 Release 产物下载到本地。
+工作流会自动创建 `desktop-v<version>` 的 GitHub Release、将其标记为 `latest`，并生成按分类整理的 Release Notes。
+注意：工作流构建的是远端分支代码，本地未提交改动不会进入 Windows 安装包。
+
+### 服务器地址配置
+
+- 浏览器模式默认走同源 `/api`
+- 桌面模式请在登录页填写远程服务器地址，例如 `https://mistrelay.example.com`
+- 也可以通过 `VITE_SERVER_BASE_URL` 预置默认服务器地址
+- 登录后可在“系统设置 > 客户端连接”中重新测试或切换服务器
+- 切换到新的服务器地址后，客户端会清除当前登录态并要求重新登录
+
 ## API 接口
 
 前端通过以下 API 接口与后端通信：

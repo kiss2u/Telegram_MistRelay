@@ -6,8 +6,8 @@ WORKDIR /app/web
 # 复制 package.json 和 package-lock.json
 COPY web/package*.json ./
 
-# 安装依赖（仅生产依赖）
-RUN npm ci --only=production
+# 安装前端构建依赖
+RUN npm ci
 
 # 复制前端源码
 COPY web/ ./

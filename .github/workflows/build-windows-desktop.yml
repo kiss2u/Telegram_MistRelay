@@ -1,0 +1,118 @@
+name: Build Windows Desktop
+
+on:
+  push:
+    tags:
+      - 'desktop-v*'
+
+jobs:
+  build-windows:
+    name: Build Windows Client
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare release metadata
+        id: meta
+        shell: bash
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          VERSION="${TAG_NAME#desktop-v}"
+          if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid version in tag: ${TAG_NAME}"
+            exit 1
+          fi
+
+          if [[ "${VERSION}" == *-* ]]; then
+            PRERELEASE="true"
+          else
+            PRERELEASE="false"
+          fi
+
+          {
+            echo "tag_name=${TAG_NAME}"
+            echo "version=${VERSION}"
+            echo "prerelease=${PRERELEASE}"
+            echo "artifact_name=mistrelay-windows-v${VERSION}"
+            echo "release_name=MistRelay Desktop v${VERSION}"
+            echo "body<<EOF"
+            echo "## Windows Desktop Build"
+            echo ""
+            echo "- Version: \`${VERSION}\`"
+            echo "- Platform: \`windows-latest\`"
+            echo "- Bundle: \`nsis\`"
+            echo "- Commit: \`${GITHUB_SHA}\`"
+            echo ""
+            echo "## Notes"
+            echo ""
+            echo "This release packages the Tauri desktop client for Windows and connects to the existing MistRelay server APIs."
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Sync desktop app version
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          node <<'EOF'
+          const fs = require('fs')
+          const path = require('path')
+
+          const version = process.env.RELEASE_VERSION
+          const cargoTomlPath = path.join(process.cwd(), 'web', 'src-tauri', 'Cargo.toml')
+          const tauriConfigPath = path.join(process.cwd(), 'web', 'src-tauri', 'tauri.conf.json')
+
+          const cargoToml = fs.readFileSync(cargoTomlPath, 'utf8').replace(
+            /^version = ".*"$/m,
+            `version = "${version}"`,
+          )
+          fs.writeFileSync(cargoTomlPath, cargoToml)
+
+          const tauriConfig = JSON.parse(fs.readFileSync(tauriConfigPath, 'utf8'))
+          tauriConfig.version = version
+          fs.writeFileSync(tauriConfigPath, `${JSON.stringify(tauriConfig, null, 2)}\n`)
+          EOF
+
+      - name: Build Windows desktop client
+        working-directory: web
+        run: npm run desktop:build -- --bundles nsis
+
+      - name: Upload Windows bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.meta.outputs.artifact_name }}
+          path: |
+            web/src-tauri/target/release/bundle/**/*
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag_name }}
+          name: ${{ steps.meta.outputs.release_name }}
+          target_commitish: ${{ github.sha }}
+          prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
+          generate_release_notes: true
+          make_latest: true
+          body: ${{ steps.meta.outputs.body }}
+          files: |
+            web/src-tauri/target/release/bundle/**/*
