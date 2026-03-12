@@ -1,0 +1,183 @@
+<template>
+  <div class="task-list">
+    <el-table :data="tasks" stripe style="width: 100%" v-loading="loading">
+      <el-table-column prop="file_name" label="文件名" min-width="200" show-overflow-tooltip>
+        <template #default="{ row }">
+          {{ row.file_name || row.source_url?.substring(0, 50) || '未知文件' }}
+        </template>
+      </el-table-column>
+      
+      <el-table-column label="大小" width="120">
+        <template #default="{ row }">
+          {{ formatSize(row.total_length || row.file_size) }}
+        </template>
+      </el-table-column>
+      
+      <el-table-column label="进度" width="200" v-if="status === 'downloading'">
+        <template #default="{ row }">
+          <el-progress
+            :percentage="getProgress(row.total_length, row.completed_length, row.status)"
+            :status="getProgressStatus(row.status)"
+            :stroke-width="8"
+          />
+        </template>
+      </el-table-column>
+      
+      <el-table-column label="速度" width="100" v-if="status === 'downloading'">
+        <template #default="{ row }">
+          {{ formatSpeed(row.download_speed) }}
+        </template>
+      </el-table-column>
+      
+      <el-table-column label="状态" width="100">
+        <template #default="{ row }">
+          <el-tag :type="getStatusTagType(row.status)" size="small">
+            {{ getStatusText(row.status) }}
+          </el-tag>
+        </template>
+      </el-table-column>
+      
+      <el-table-column label="创建时间" width="180">
+        <template #default="{ row }">
+          {{ formatDate(row.created_at) }}
+        </template>
+      </el-table-column>
+      
+      <el-table-column label="操作" width="160" fixed="right">
+        <template #default="{ row }">
+          <el-button-group>
+            <el-button
+              size="small"
+              :icon="Refresh"
+              :loading="loading"
+              :disabled="!row.gid && !row.source_url"
+              @click="handleRetry(row)"
+              title="重试"
+            />
+            <el-button
+              size="small"
+              type="danger"
+              :icon="Delete"
+              :loading="loading"
+              @click="handleDelete(row)"
+              title="删除"
+            />
+          </el-button-group>
+        </template>
+      </el-table-column>
+    </el-table>
+    
+    <div v-if="tasks.length === 0" class="empty-state">
+      <el-empty description="暂无任务" :image-size="100" />
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Delete, Refresh } from '@element-plus/icons-vue'
+import type { DownloadRecord } from '@/types/api'
+import {
+  formatSize,
+  formatDate,
+  getProgress,
+  getStatusText,
+  getStatusTagType
+} from '@/utils/formatters'
+import {
+  retryDownload,
+  deleteDownload
+} from '@/api'
+
+interface Props {
+  tasks: DownloadRecord[]
+  status?: string
+}
+
+const props = defineProps<Props>()
+const emit = defineEmits<{
+  refresh: []
+}>()
+
+const loading = ref(false)
+
+function formatSpeed(speed?: number): string {
+  if (!speed) return '-'
+  return formatSize(speed) + '/s'
+}
+
+function getProgressStatus(status?: string): 'success' | 'exception' | 'warning' {
+  if (status === 'completed') return 'success'
+  if (status === 'failed') return 'exception'
+  return 'warning'
+}
+
+async function handleRetry(task: DownloadRecord) {
+  if (!task.gid && !task.source_url) {
+    ElMessage.warning('任务GID和源URL都不存在，无法重试')
+    return
+  }
+  
+  try {
+    loading.value = true
+    if (task.gid) {
+      const result = await retryDownload(task.gid)
+      if (result.success) {
+        ElMessage.success(result.message || '任务已重新提交到aria2')
+        emit('refresh')
+      } else {
+        ElMessage.error(result.error || '重试失败')
+      }
+    } else if (task.source_url) {
+      ElMessage.warning('该任务没有GID，无法直接重试，请使用源URL重新添加')
+    }
+  } catch (error: any) {
+    ElMessage.error(error.message || '重试失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+async function handleDelete(task: DownloadRecord) {
+  if (!task.gid) {
+    ElMessage.warning('任务GID不存在')
+    return
+  }
+  
+  ElMessageBox.confirm(
+    `确定要删除任务 "${task.file_name || '未知文件'}" 吗？`,
+    '确认删除',
+    {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      type: 'warning'
+    }
+  ).then(async () => {
+    try {
+      loading.value = true
+      const result = await deleteDownload(task.gid!)
+      if (result.success) {
+        ElMessage.success(result.message || '任务已删除')
+        emit('refresh')
+      } else {
+        ElMessage.error(result.error || '删除失败')
+      }
+    } catch (error: any) {
+      ElMessage.error(error.message || '删除失败')
+    } finally {
+      loading.value = false
+    }
+  }).catch(() => {})
+}
+</script>
+
+<style scoped>
+.task-list {
+  @apply min-h-[400px];
+}
+
+.empty-state {
+  @apply py-12;
+}
+</style>

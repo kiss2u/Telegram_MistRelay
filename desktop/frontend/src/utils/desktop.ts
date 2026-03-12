@@ -1,6 +1,5 @@
 import { check, type Update } from '@tauri-apps/plugin-updater'
 import { relaunch } from '@tauri-apps/plugin-process'
-import { isDesktopShell } from '@/utils/runtime'
 
 export interface DesktopProxyConfig {
   enabled: boolean
@@ -56,10 +55,6 @@ async function invokeDesktopCommand<T>(
   command: string,
   args?: Record<string, unknown>,
 ): Promise<T> {
-  if (!isDesktopShell()) {
-    throw new Error('当前不是桌面客户端环境')
-  }
-
   const invoke = getTauriInvoke()
   if (!invoke) {
     throw new Error('桌面客户端 API 不可用')
@@ -69,10 +64,6 @@ async function invokeDesktopCommand<T>(
 }
 
 export async function getDesktopClientConfig(): Promise<DesktopClientConfig> {
-  if (!isDesktopShell()) {
-    return { ...DEFAULT_DESKTOP_CLIENT_CONFIG }
-  }
-
   return invokeDesktopCommand<DesktopClientConfig>('get_desktop_client_config')
 }
 
@@ -160,10 +151,6 @@ export interface UpdateCheckResult {
 }
 
 export async function checkForUpdate(): Promise<{ result: UpdateCheckResult; update: Update | null }> {
-  if (!isDesktopShell()) {
-    return { result: { available: false }, update: null }
-  }
-
   const update = await check()
 
   if (!update) {

@@ -71,7 +71,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, reactive } from 'vue'
+import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, type FormInstance } from 'element-plus'
 import { User, Lock, Monitor, Link } from '@element-plus/icons-vue'
@@ -101,7 +101,7 @@ const rules = {
   serverUrl: [{
     validator: (_rule: unknown, value: string, callback: (error?: Error) => void) => {
       if (!value) {
-        callback()
+        callback(new Error('桌面端需要填写服务器地址'))
         return
       }
 
@@ -122,9 +122,7 @@ const rules = {
   }],
 }
 
-const serverHint = computed(() => {
-  return '浏览器模式可留空走同源服务，也可以填写远程服务器地址。'
-})
+const serverHint = '桌面端会直接连接远程 MistRelay 服务，所有下载与上传逻辑都运行在服务器。'
 
 async function handleLogin() {
   if (!formRef.value) return

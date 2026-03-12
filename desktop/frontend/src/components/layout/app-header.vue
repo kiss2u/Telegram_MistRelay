@@ -121,7 +121,7 @@ const connectionTitle = computed(() => {
   const serverBaseUrl = getServerBaseUrl()
 
   if (!serverBaseUrl) {
-    return '同源服务'
+    return '未配置服务器'
   }
 
   try {

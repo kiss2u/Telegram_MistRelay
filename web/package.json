@@ -12,8 +12,6 @@
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",
-    "@tauri-apps/plugin-process": "^2.3.1",
-    "@tauri-apps/plugin-updater": "^2.10.0",
     "@types/video.js": "^7.3.58",
     "@vueuse/components": "^14.1.0",
     "@vueuse/core": "^14.1.0",

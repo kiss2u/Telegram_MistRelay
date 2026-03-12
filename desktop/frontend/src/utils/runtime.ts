@@ -13,11 +13,11 @@ export function normalizeServerBaseUrl(value: string): string {
 }
 
 export function isDesktopShell(): boolean {
-  return false
+  return true
 }
 
 export function shouldUseHashHistory(): boolean {
-  return import.meta.env.VITE_USE_HASH_ROUTER === 'true'
+  return true
 }
 
 export function getDefaultServerBaseUrl(): string {

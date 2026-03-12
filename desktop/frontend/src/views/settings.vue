@@ -27,7 +27,7 @@
           </template>
 
           <el-alert
-            title="浏览器端可选择同源访问，也可以指定远程服务器。"
+            title="桌面端只负责展示 UI，所有逻辑仍运行在服务器。"
             type="info"
             :closable="false"
             style="margin-bottom: 20px"
@@ -35,7 +35,7 @@
 
           <el-form label-width="180px">
             <el-form-item label="客户端类型">
-              <el-tag type="info">浏览器客户端</el-tag>
+              <el-tag type="success">桌面客户端</el-tag>
             </el-form-item>
             <el-form-item label="服务器地址">
               <el-input
@@ -44,7 +44,7 @@
                 clearable
               />
               <div class="el-form-item__help">
-                留空时继续使用当前同源服务。
+                桌面端必须填写；浏览器端留空时继续使用当前同源服务。
               </div>
             </el-form-item>
             <el-form-item label="当前生效地址">
@@ -60,6 +60,79 @@
                 </span>
               </div>
             </el-form-item>
+            <el-divider content-position="left">软件更新</el-divider>
+              <el-form-item label="当前版本">
+                <el-tag type="info">v{{ appVersion }}</el-tag>
+              </el-form-item>
+              <el-form-item label="检查更新">
+                <div class="card-actions">
+                  <el-button @click="handleCheckUpdate" :loading="checkingUpdate" :disabled="installingUpdate">
+                    检查更新
+                  </el-button>
+                  <el-button
+                    v-if="updateAvailable"
+                    type="primary"
+                    @click="handleInstallUpdate"
+                    :loading="installingUpdate"
+                  >
+                    更新到 v{{ updateVersion }}
+                  </el-button>
+                </div>
+              </el-form-item>
+              <el-form-item v-if="updateStatusText" label="更新状态">
+                <div class="connection-status">
+                  <el-tag :type="updateStatusTagType">{{ updateStatusLabel }}</el-tag>
+                  <span class="connection-status-text">{{ updateStatusText }}</span>
+                </div>
+              </el-form-item>
+              <el-form-item v-if="installingUpdate && updateProgressPercent >= 0" label="下载进度">
+                <el-progress :percentage="updateProgressPercent" :stroke-width="18" striped striped-flow />
+              </el-form-item>
+
+              <el-divider content-position="left">桌面代理</el-divider>
+              <el-alert
+                title="桌面代理只影响本地客户端访问服务器的流量，不影响服务器端下载、上传和任务执行。保存后需要重启客户端。"
+                type="warning"
+                :closable="false"
+                style="margin-bottom: 20px"
+              />
+              <el-form-item label="启用桌面代理">
+                <el-switch v-model="desktopProxyEnabled" />
+              </el-form-item>
+              <el-form-item label="代理地址">
+                <el-input
+                  v-model="desktopProxyUrl"
+                  :disabled="!desktopProxyEnabled"
+                  placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:1080"
+                  clearable
+                />
+                <div class="el-form-item__help">
+                  支持 `http://` 和 `socks5://`，如需认证可写成 `http://user:pass@host:port`。
+                </div>
+              </el-form-item>
+              <el-form-item label="代理状态">
+                <div class="connection-status">
+                  <el-tag :type="desktopProxyStatusTagType">
+                    {{ desktopProxyStatusLabel }}
+                  </el-tag>
+                  <span v-if="desktopProxyStatusText" class="connection-status-text">
+                    {{ desktopProxyStatusText }}
+                  </span>
+                </div>
+              </el-form-item>
+              <el-form-item label="代理操作">
+                <div class="card-actions">
+                  <el-button @click="loadDesktopProxyConfig" :loading="loadingDesktopProxyConfig">
+                    重新读取
+                  </el-button>
+                  <el-button type="primary" @click="saveDesktopProxyConfig" :loading="savingDesktopProxyConfig">
+                    保存代理配置
+                  </el-button>
+                  <el-button type="warning" @click="restartDesktopClient" :loading="restartingDesktopClient">
+                    立即重启客户端
+                  </el-button>
+                </div>
+              </el-form-item>
           </el-form>
         </el-card>
       </el-tab-pane>
@@ -427,6 +500,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { getConfig, updateConfig, reloadConfig, getRcloneConfig, saveRcloneConfig, getRcloneRemotes, type RcloneRemote } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { checkServerConnection } from '@/utils/connection'
+import { getDesktopClientConfig, isValidDesktopProxyUrl, restartDesktopApp, saveDesktopClientConfig, checkForUpdate, downloadAndInstallUpdate, type UpdateProgress } from '@/utils/desktop'
+import type { Update } from '@tauri-apps/plugin-updater'
 import { getServerBaseUrl, isValidServerBaseUrl, setServerBaseUrl } from '@/utils/runtime'
 import { useRouter } from 'vue-router'
 
@@ -440,6 +515,40 @@ const testingConnection = ref(false)
 const savingClientConnection = ref(false)
 const connectionState = ref<'idle' | 'success' | 'error'>('idle')
 const connectionStatusText = ref('')
+const loadingDesktopProxyConfig = ref(false)
+const savingDesktopProxyConfig = ref(false)
+const restartingDesktopClient = ref(false)
+const desktopProxyEnabled = ref(false)
+const desktopProxyUrl = ref('')
+const desktopProxyStatus = ref<'idle' | 'enabled' | 'disabled' | 'pending'>('idle')
+const desktopProxyStatusText = ref('')
+
+const appVersion = __APP_VERSION__
+const checkingUpdate = ref(false)
+const installingUpdate = ref(false)
+const updateAvailable = ref(false)
+const updateVersion = ref('')
+const updateBody = ref('')
+const updateStatusText = ref('')
+const updateStatus = ref<'idle' | 'available' | 'latest' | 'downloading' | 'error'>('idle')
+const updateProgressPercent = ref(-1)
+let pendingUpdate: Update | null = null
+
+const updateStatusLabel = computed(() => {
+  if (updateStatus.value === 'available') return '有新版本'
+  if (updateStatus.value === 'latest') return '已是最新'
+  if (updateStatus.value === 'downloading') return '下载中'
+  if (updateStatus.value === 'error') return '检查失败'
+  return ''
+})
+const updateStatusTagType = computed(() => {
+  if (updateStatus.value === 'available') return 'warning'
+  if (updateStatus.value === 'latest') return 'success'
+  if (updateStatus.value === 'downloading') return ''
+  if (updateStatus.value === 'error') return 'danger'
+  return 'info'
+})
+
 // Rclone 配置文件管理相关状态
 const rcloneConfigContent = ref('')
 const rcloneConfigPath = ref('/root/.config/rclone/rclone.conf')
@@ -463,6 +572,18 @@ const connectionStatusTagType = computed(() => {
   if (connectionState.value === 'error') return 'danger'
   return 'info'
 })
+const desktopProxyStatusLabel = computed(() => {
+  if (desktopProxyStatus.value === 'enabled') return '已启用'
+  if (desktopProxyStatus.value === 'disabled') return '未启用'
+  if (desktopProxyStatus.value === 'pending') return '待重启生效'
+  return '未读取'
+})
+const desktopProxyStatusTagType = computed(() => {
+  if (desktopProxyStatus.value === 'enabled') return 'success'
+  if (desktopProxyStatus.value === 'pending') return 'warning'
+  return 'info'
+})
+
 // 配置数据
 const configs = ref({
   telegram: {
@@ -545,6 +666,15 @@ const rules = {
 }
 
 async function testConnection(showMessage = true) {
+  if (!clientServerUrl.value) {
+    connectionState.value = 'error'
+    connectionStatusText.value = '桌面端必须填写服务器地址'
+    if (showMessage) {
+      ElMessage.error(connectionStatusText.value)
+    }
+    return false
+  }
+
   if (!isValidServerBaseUrl(clientServerUrl.value)) {
     connectionState.value = 'error'
     connectionStatusText.value = '服务器地址格式不正确'
@@ -575,6 +705,11 @@ async function testConnection(showMessage = true) {
 }
 
 async function saveClientConnection() {
+  if (!clientServerUrl.value) {
+    ElMessage.error('桌面端必须填写服务器地址')
+    return
+  }
+
   if (!isValidServerBaseUrl(clientServerUrl.value)) {
     ElMessage.error('服务器地址格式不正确')
     return
@@ -601,6 +736,163 @@ async function saveClientConnection() {
     ElMessage.success('客户端连接已保存')
   } finally {
     savingClientConnection.value = false
+  }
+}
+
+async function loadDesktopProxyConfig(showMessage = false) {
+  loadingDesktopProxyConfig.value = true
+  try {
+    const config = await getDesktopClientConfig()
+    desktopProxyEnabled.value = config.proxy.enabled
+    desktopProxyUrl.value = config.proxy.url
+    desktopProxyStatus.value = config.proxy.enabled ? 'enabled' : 'disabled'
+    desktopProxyStatusText.value = config.proxy.enabled
+      ? `当前将在客户端启动时通过 ${config.proxy.url} 访问服务器`
+      : '当前客户端启动时不使用代理'
+
+    if (showMessage) {
+      ElMessage.success('桌面代理配置已读取')
+    }
+  } catch (err: any) {
+    console.error('加载桌面代理配置失败:', err)
+    desktopProxyStatus.value = 'idle'
+    desktopProxyStatusText.value = err.message || '读取失败'
+    ElMessage.error(err.message || '加载桌面代理配置失败')
+  } finally {
+    loadingDesktopProxyConfig.value = false
+  }
+}
+
+async function saveDesktopProxyConfig() {
+  const proxyUrl = desktopProxyUrl.value.trim()
+
+  if (desktopProxyEnabled.value && !proxyUrl) {
+    ElMessage.error('启用桌面代理时必须填写代理地址')
+    return
+  }
+
+  if (desktopProxyEnabled.value && !isValidDesktopProxyUrl(proxyUrl)) {
+    ElMessage.error('代理地址格式不正确，只支持 http:// 或 socks5://')
+    return
+  }
+
+  savingDesktopProxyConfig.value = true
+  try {
+    await saveDesktopClientConfig({
+      proxy: {
+        enabled: desktopProxyEnabled.value,
+        url: proxyUrl,
+      },
+    })
+
+    desktopProxyUrl.value = proxyUrl
+    desktopProxyStatus.value = 'pending'
+    desktopProxyStatusText.value = desktopProxyEnabled.value
+      ? '代理配置已保存，重启客户端后将通过该代理访问服务器'
+      : '代理关闭已保存，重启客户端后将恢复直连服务器'
+
+    ElMessage.success('桌面代理配置已保存，重启客户端后生效')
+  } catch (err: any) {
+    console.error('保存桌面代理配置失败:', err)
+    ElMessage.error(err.message || '保存桌面代理配置失败')
+  } finally {
+    savingDesktopProxyConfig.value = false
+  }
+}
+
+async function restartDesktopClient() {
+  try {
+    await ElMessageBox.confirm(
+      '桌面客户端将立即重启，以应用最新的代理配置。',
+      '确认重启客户端',
+      {
+        confirmButtonText: '立即重启',
+        cancelButtonText: '取消',
+        type: 'warning'
+      }
+    )
+
+    restartingDesktopClient.value = true
+    await restartDesktopApp()
+  } catch (err: any) {
+    if (err !== 'cancel') {
+      console.error('重启桌面客户端失败:', err)
+      ElMessage.error(err.message || '重启桌面客户端失败')
+    }
+  } finally {
+    restartingDesktopClient.value = false
+  }
+}
+
+async function handleCheckUpdate() {
+  checkingUpdate.value = true
+  updateStatusText.value = ''
+  updateStatus.value = 'idle'
+  updateAvailable.value = false
+  pendingUpdate = null
+  try {
+    const { result, update } = await checkForUpdate()
+    if (result.available && update) {
+      updateAvailable.value = true
+      updateVersion.value = result.version || ''
+      updateBody.value = result.body || ''
+      updateStatus.value = 'available'
+      updateStatusText.value = result.body
+        ? `v${result.version} — ${result.body}`
+        : `v${result.version} 可用`
+      pendingUpdate = update
+    } else {
+      updateStatus.value = 'latest'
+      updateStatusText.value = '当前已是最新版本'
+    }
+  } catch (err: any) {
+    console.error('检查更新失败:', err)
+    updateStatus.value = 'error'
+    updateStatusText.value = err.message || '检查更新失败'
+    ElMessage.error(updateStatusText.value)
+  } finally {
+    checkingUpdate.value = false
+  }
+}
+
+async function handleInstallUpdate() {
+  if (!pendingUpdate) return
+
+  try {
+    await ElMessageBox.confirm(
+      `确定要更新到 v${updateVersion.value} 吗？更新完成后客户端将自动重启。`,
+      '确认更新',
+      {
+        confirmButtonText: '立即更新',
+        cancelButtonText: '取消',
+        type: 'info',
+      },
+    )
+  } catch {
+    return
+  }
+
+  installingUpdate.value = true
+  updateStatus.value = 'downloading'
+  updateProgressPercent.value = 0
+  updateStatusText.value = '正在下载更新…'
+
+  try {
+    await downloadAndInstallUpdate(pendingUpdate, (progress: UpdateProgress) => {
+      if (progress.total && progress.total > 0) {
+        updateProgressPercent.value = Math.round((progress.downloaded / progress.total) * 100)
+      }
+      if (progress.done) {
+        updateStatusText.value = '下载完成，正在安装并重启…'
+      }
+    })
+  } catch (err: any) {
+    console.error('安装更新失败:', err)
+    updateStatus.value = 'error'
+    updateStatusText.value = err.message || '安装更新失败'
+    ElMessage.error(updateStatusText.value)
+    installingUpdate.value = false
+    updateProgressPercent.value = -1
   }
 }
 
@@ -782,6 +1074,7 @@ async function loadRcloneRemotes() {
 onMounted(() => {
   fetchConfigs()
   void testConnection(false)
+  void loadDesktopProxyConfig()
   // 自动加载 Rclone 配置文件
   loadRcloneConfigFile()
   // 自动加载 Rclone remotes 列表
