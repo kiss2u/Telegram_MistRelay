@@ -3,6 +3,7 @@ name: Build Windows Desktop
 on:
   push:
     tags:
+      - 'v*'
       - 'desktop-v*'
 
 jobs:
@@ -13,6 +14,8 @@ jobs:
       contents: write
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
     steps:
       - name: Checkout repository
@@ -25,6 +28,7 @@ jobs:
           TAG_NAME: ${{ github.ref_name }}
         run: |
           VERSION="${TAG_NAME#desktop-v}"
+          VERSION="${VERSION#v}"
           if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.+][0-9A-Za-z.-]+)?$ ]]; then
             echo "Invalid version in tag: ${TAG_NAME}"
             exit 1
@@ -42,18 +46,6 @@ jobs:
             echo "prerelease=${PRERELEASE}"
             echo "artifact_name=mistrelay-windows-v${VERSION}"
             echo "release_name=MistRelay Desktop v${VERSION}"
-            echo "body<<EOF"
-            echo "## Windows Desktop Build"
-            echo ""
-            echo "- Version: \`${VERSION}\`"
-            echo "- Platform: \`windows-latest\`"
-            echo "- Bundle: \`nsis\`"
-            echo "- Commit: \`${GITHUB_SHA}\`"
-            echo ""
-            echo "## Notes"
-            echo ""
-            echo "This release packages the Tauri desktop client for Windows and connects to the existing MistRelay server APIs."
-            echo "EOF"
           } >> "${GITHUB_OUTPUT}"
 
       - name: Setup Node.js
@@ -66,6 +58,11 @@ jobs:
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: web/src-tauri
+
       - name: Install frontend dependencies
         working-directory: web
         run: npm ci
@@ -75,7 +72,7 @@ jobs:
         env:
           RELEASE_VERSION: ${{ steps.meta.outputs.version }}
         run: |
-          node <<'EOF'
+          node <<'SCRIPT'
           const fs = require('fs')
           const path = require('path')
 
@@ -92,18 +89,59 @@ jobs:
           const tauriConfig = JSON.parse(fs.readFileSync(tauriConfigPath, 'utf8'))
           tauriConfig.version = version
           fs.writeFileSync(tauriConfigPath, `${JSON.stringify(tauriConfig, null, 2)}\n`)
-          EOF
+          SCRIPT
 
       - name: Build Windows desktop client
         working-directory: web
         run: npm run desktop:build -- --bundles nsis
 
-      - name: Upload Windows bundles
+      - name: Generate latest.json for updater
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.meta.outputs.version }}
+          REPO: ${{ github.repository }}
+          TAG_NAME: ${{ steps.meta.outputs.tag_name }}
+        run: |
+          NSIS_DIR="web/src-tauri/target/release/bundle/nsis"
+
+          SETUP_EXE=$(ls "${NSIS_DIR}"/*-setup.exe 2>/dev/null | head -1)
+          SETUP_SIG=$(ls "${NSIS_DIR}"/*-setup.exe.sig 2>/dev/null | head -1)
+
+          if [[ -z "${SETUP_EXE}" || -z "${SETUP_SIG}" ]]; then
+            echo "ERROR: could not find NSIS setup exe or signature file"
+            ls -la "${NSIS_DIR}"/
+            exit 1
+          fi
+
+          EXE_NAME=$(basename "${SETUP_EXE}")
+          SIG_CONTENT=$(cat "${SETUP_SIG}")
+          DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${TAG_NAME}/${EXE_NAME}"
+          PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          cat > latest.json <<ENDJSON
+          {
+            "version": "${RELEASE_VERSION}",
+            "notes": "MistRelay Desktop v${RELEASE_VERSION}",
+            "pub_date": "${PUB_DATE}",
+            "platforms": {
+              "windows-x86_64": {
+                "signature": "${SIG_CONTENT}",
+                "url": "${DOWNLOAD_URL}"
+              }
+            }
+          }
+          ENDJSON
+
+          echo "--- latest.json ---"
+          cat latest.json
+
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.meta.outputs.artifact_name }}
           path: |
-            web/src-tauri/target/release/bundle/**/*
+            web/src-tauri/target/release/bundle/nsis/*
+            latest.json
           if-no-files-found: error
 
       - name: Create GitHub Release
@@ -115,6 +153,7 @@ jobs:
           prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
           generate_release_notes: true
           make_latest: true
-          body: ${{ steps.meta.outputs.body }}
           files: |
-            web/src-tauri/target/release/bundle/**/*
+            web/src-tauri/target/release/bundle/nsis/*.exe
+            web/src-tauri/target/release/bundle/nsis/*.exe.sig
+            latest.json
