@@ -115,6 +115,41 @@
         </div>
       </div>
 
+      <div v-if="isDesktopShell() && desktopDownloadList.length > 0" class="desktop-downloads-panel">
+        <div class="desktop-downloads-header">
+          <div>
+            <div class="desktop-downloads-title">本地下载任务</div>
+            <div class="desktop-downloads-subtitle">文件会保存到 Windows 下载目录下的 `MistRelay` 文件夹。</div>
+          </div>
+        </div>
+        <div class="desktop-downloads-list">
+          <div
+            v-for="task in desktopDownloadList"
+            :key="task.transferId"
+            class="desktop-download-item"
+          >
+            <div class="desktop-download-item-head">
+              <span class="desktop-download-name" :title="task.fileName">{{ task.fileName }}</span>
+              <el-tag :type="getDesktopDownloadTagType(task)" size="small">
+                {{ getDesktopDownloadLabel(task) }}
+              </el-tag>
+            </div>
+            <el-progress
+              :percentage="task.progressPercent"
+              :status="getDesktopDownloadProgressStatus(task)"
+              :indeterminate="!task.totalBytes && task.state !== 'completed' && task.state !== 'error'"
+              :duration="2"
+              :stroke-width="8"
+            />
+            <div class="desktop-download-meta">
+              <span>{{ formatDesktopDownloadMeta(task) }}</span>
+              <span v-if="task.state === 'completed'">{{ task.localPath }}</span>
+              <span v-else-if="task.error">{{ task.error }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- 列表视图 -->
       <el-table
         v-if="viewMode === 'list'"
@@ -317,11 +352,12 @@ import { HomeFilled, Document, Folder, Search, List, Grid, Picture, VideoPlay, S
 import { getRcloneRemotes, browseDrive, getThumbnail, deleteFile, getDriveUsage, type RcloneRemote, type DriveItem, type DriveUsageResponse } from '@/api'
 import VideoPlayer from '@/components/VideoPlayer.vue'
 import {
-  downloadDesktopFile,
+  startDesktopDownload,
   getDesktopTransferStatus,
   prepareDesktopPreviewFile,
   startDesktopPreviewStream,
   toDesktopAssetUrl,
+  type DesktopDownloadSession,
   type DesktopTransferStatus,
 } from '@/utils/desktop'
 import { buildAuthorizedApiUrl, isDesktopShell } from '@/utils/runtime'
@@ -699,6 +735,78 @@ function handleRemoteChange() {
   browse()
 }
 
+function getDesktopDownloadLabel(task: DesktopTransferStatus): string {
+  if (task.state === 'completed') return '已完成'
+  if (task.state === 'error') return '失败'
+  if (task.state === 'pending') return '等待中'
+  return '下载中'
+}
+
+function getDesktopDownloadTagType(task: DesktopTransferStatus): 'success' | 'danger' | 'warning' | 'info' {
+  if (task.state === 'completed') return 'success'
+  if (task.state === 'error') return 'danger'
+  if (task.state === 'pending') return 'info'
+  return 'warning'
+}
+
+function getDesktopDownloadProgressStatus(task: DesktopTransferStatus): '' | 'success' | 'exception' | 'warning' {
+  if (task.state === 'completed') return 'success'
+  if (task.state === 'error') return 'exception'
+  return 'warning'
+}
+
+function formatDesktopDownloadMeta(task: DesktopTransferStatus): string {
+  const downloaded = formatBytes(task.downloadedBytes)
+  if (task.totalBytes && task.totalBytes > 0) {
+    return `${downloaded} / ${formatBytes(task.totalBytes)}`
+  }
+  return downloaded
+}
+
+async function monitorDesktopDownload(session: DesktopDownloadSession, itemPath: string) {
+  let successNotified = false
+
+  try {
+    while (true) {
+      const status = await getDesktopTransferStatus(session.transferId)
+      desktopDownloadStatuses.value = {
+        ...desktopDownloadStatuses.value,
+        [session.transferId]: status,
+      }
+
+      if (status.state === 'completed') {
+        downloadingPaths.value = {
+          ...downloadingPaths.value,
+          [itemPath]: false,
+        }
+        if (!successNotified) {
+          ElMessage.success(`已下载到本地: ${status.localPath}`)
+          successNotified = true
+        }
+        return
+      }
+
+      if (status.state === 'error') {
+        downloadingPaths.value = {
+          ...downloadingPaths.value,
+          [itemPath]: false,
+        }
+        ElMessage.error(status.error || '桌面端下载失败')
+        return
+      }
+
+      await sleep(350)
+    }
+  } catch (err: any) {
+    console.error('轮询桌面下载进度失败:', err)
+    downloadingPaths.value = {
+      ...downloadingPaths.value,
+      [itemPath]: false,
+    }
+    ElMessage.error(err.message || '轮询桌面下载进度失败')
+  }
+}
+
 // 下载文件
 async function handleDownload(item: DriveItem) {
   if (item.isDir) return
@@ -714,23 +822,41 @@ async function handleDownload(item: DriveItem) {
     return
   }
 
+  if (downloadingPaths.value[item.path]) {
+    return
+  }
+
   downloadingPaths.value = {
     ...downloadingPaths.value,
     [item.path]: true
   }
 
   try {
-    const result = await downloadDesktopFile({
+    const session = await startDesktopDownload({
       sourceUrl: url,
       remote: currentRemote.value,
       remotePath: item.path,
       fileName: item.name,
     })
-    ElMessage.success(`已下载到本地: ${result.localPath}`)
+
+    desktopDownloadStatuses.value = {
+      ...desktopDownloadStatuses.value,
+      [session.transferId]: {
+        transferId: session.transferId,
+        fileName: session.fileName,
+        localPath: session.localPath,
+        downloadedBytes: 0,
+        totalBytes: undefined,
+        progressPercent: 0,
+        state: 'pending',
+        readyForPreview: false,
+      },
+    }
+
+    void monitorDesktopDownload(session, item.path)
   } catch (err: any) {
     console.error('桌面端下载失败:', err)
     ElMessage.error(err.message || '桌面端下载失败')
-  } finally {
     downloadingPaths.value = {
       ...downloadingPaths.value,
       [item.path]: false
@@ -777,8 +903,22 @@ const previewType = ref<'image' | 'video' | 'unknown'>('unknown')
 const previewUrl = ref('')
 const previewLoading = ref(false)
 const downloadingPaths = ref<Record<string, boolean>>({})
+const desktopDownloadStatuses = ref<Record<string, DesktopTransferStatus>>({})
 const previewTransferStatus = ref<DesktopTransferStatus | null>(null)
 let previewRequestToken = 0
+
+const desktopDownloadList = computed(() => {
+  return Object.values(desktopDownloadStatuses.value)
+    .sort((a, b) => {
+      const stateScore = (value: DesktopTransferStatus['state']) => {
+        if (value === 'downloading' || value === 'pending') return 0
+        if (value === 'completed') return 1
+        return 2
+      }
+
+      return stateScore(a.state) - stateScore(b.state)
+    })
+})
 
 const previewProgressPercent = computed(() => {
   if (!previewTransferStatus.value) return 0
@@ -1140,6 +1280,75 @@ watch(paginatedItems, () => {
   display: flex;
   justify-content: flex-end;
   margin-top: 20px;
+}
+
+.desktop-downloads-panel {
+  margin-bottom: 16px;
+  padding: 18px 20px;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #f8fafc 0%, #eef6ff 100%);
+  border: 1px solid #dbeafe;
+}
+
+.desktop-downloads-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.desktop-downloads-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.desktop-downloads-subtitle {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.desktop-downloads-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.desktop-download-item {
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid #dbeafe;
+}
+
+.desktop-download-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.desktop-download-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #0f172a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.desktop-download-meta {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 12px;
+  color: #64748b;
+  word-break: break-all;
 }
 
 /* 网格视图样式 */

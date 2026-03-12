@@ -16,6 +16,12 @@ export interface DesktopTransferResult {
   localPath: string
 }
 
+export interface DesktopDownloadSession {
+  transferId: string
+  fileName: string
+  localPath: string
+}
+
 export interface DesktopPreviewSession {
   transferId: string
   streamUrl: string
@@ -85,6 +91,15 @@ export async function downloadDesktopFile(payload: {
   fileName: string
 }): Promise<DesktopTransferResult> {
   return invokeDesktopCommand<DesktopTransferResult>('desktop_download_file', payload)
+}
+
+export async function startDesktopDownload(payload: {
+  sourceUrl: string
+  remote: string
+  remotePath: string
+  fileName: string
+}): Promise<DesktopDownloadSession> {
+  return invokeDesktopCommand<DesktopDownloadSession>('desktop_start_download', payload)
 }
 
 export async function prepareDesktopPreviewFile(payload: {

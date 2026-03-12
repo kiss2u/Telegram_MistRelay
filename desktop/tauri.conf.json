@@ -4,10 +4,10 @@
   "version": "0.1.1",
   "identifier": "com.mistrelay.desktop",
   "build": {
-    "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build",
+    "beforeDevCommand": "npm --prefix ../web run dev",
+    "beforeBuildCommand": "npm --prefix ../web run build",
     "devUrl": "http://localhost:5173",
-    "frontendDist": "../dist"
+    "frontendDist": "../web/dist"
   },
   "app": {
     "withGlobalTauri": true,

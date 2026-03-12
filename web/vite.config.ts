@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs'
 
 function readAppVersion(): string {
   try {
-    const conf = JSON.parse(readFileSync(new URL('./src-tauri/tauri.conf.json', import.meta.url), 'utf-8'))
+    const conf = JSON.parse(readFileSync(new URL('../desktop/tauri.conf.json', import.meta.url), 'utf-8'))
     return conf.version ?? '0.0.0'
   } catch {
     return '0.0.0'
