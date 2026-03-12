@@ -57,7 +57,6 @@ jobs:
         shell: bash
         env:
           SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          SIGNING_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           SANITIZED_KEY="$(printf '%s' "${SIGNING_KEY}" | tr -d '[:space:]')"
 
@@ -88,7 +87,7 @@ jobs:
             echo "${SANITIZED_KEY}"
             echo "__SIGNING_EOF__"
           } >> "${GITHUB_ENV}"
-          echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=${SIGNING_PASSWORD}" >> "${GITHUB_ENV}"
+          echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=" >> "${GITHUB_ENV}"
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable

@@ -60,6 +60,7 @@
 - 需要先把要构建的代码提交并推送到目标分支/提交
 
 `TAURI_SIGNING_PRIVATE_KEY` 需要填入 `tauri signer generate` 生成的私钥文件内容本身。
+如果使用当前仓库这套 key，`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 保持空即可。
 不要填 updater 的 `pubkey`、文件路径或被空格打断的 base64 文本。
 
 **使用方法**:
