@@ -189,6 +189,8 @@ cd desktop
 npm run build
 ```
 
+当前 Windows NSIS 安装器默认使用简体中文界面。
+
 构建时需设置签名环境变量：
 
 ```bash
