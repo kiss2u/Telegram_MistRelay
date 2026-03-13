@@ -6,6 +6,7 @@ use std::{
     io::{self, BufRead, BufReader, ErrorKind, Read, Seek, SeekFrom, Write},
     net::{TcpListener, TcpStream},
     path::{Component, Path, PathBuf},
+    process::Command,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Condvar, Mutex,
@@ -21,6 +22,9 @@ use url::Url;
 
 const PREVIEW_READY_BYTES: u64 = 4 * 1024 * 1024;
 const MIN_THREADS_PER_DOWNLOAD: u32 = 2;
+const TRANSFER_PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(500);
+const TRANSFER_SPEED_SAMPLE_INTERVAL: Duration = Duration::from_millis(1000);
+const TRANSFER_CANCELLED_ERROR: &str = "__mistrelay_transfer_cancelled__";
 const DESKTOP_UPDATER_MANIFEST_URL: &str =
     "https://github.com/qianlong520/Telegram_MistRelay/releases/latest/download/latest.json";
 const MISTRELAY_MIN_THREADS_HEADER: &str = "x-mistrelay-min-threads";
@@ -226,6 +230,7 @@ struct TransferProgress {
     last_speed_sample_bytes: u64,
     last_speed_sample_at: Option<Instant>,
     complete: bool,
+    cancelled: bool,
     ready_for_preview: bool,
     error: Option<String>,
 }
@@ -243,6 +248,7 @@ struct TransferHandle {
     complete_marker_path: Option<PathBuf>,
     kind: TransferKind,
     inner: Arc<(Mutex<TransferProgress>, Condvar)>,
+    cancel_requested: Arc<AtomicBool>,
     worker_started: AtomicBool,
 }
 
@@ -255,6 +261,7 @@ impl TransferHandle {
             complete_marker_path: None,
             kind: TransferKind::Download,
             inner: Arc::new((Mutex::new(TransferProgress::default()), Condvar::new())),
+            cancel_requested: Arc::new(AtomicBool::new(false)),
             worker_started: AtomicBool::new(false),
         }
     }
@@ -267,6 +274,7 @@ impl TransferHandle {
             local_path,
             kind: TransferKind::Preview,
             inner: Arc::new((Mutex::new(TransferProgress::default()), Condvar::new())),
+            cancel_requested: Arc::new(AtomicBool::new(false)),
             worker_started: AtomicBool::new(false),
         }
     }
@@ -679,12 +687,63 @@ fn preview_ready_threshold(total_bytes: Option<u64>) -> u64 {
     }
 }
 
+fn is_transfer_cancel_requested(handle: &TransferHandle) -> bool {
+    handle.cancel_requested.load(Ordering::SeqCst)
+}
+
+fn cleanup_transfer_artifacts(handle: &TransferHandle) {
+    let _ = fs::remove_file(&handle.local_path);
+
+    if let Some(complete_marker_path) = &handle.complete_marker_path {
+        let _ = fs::remove_file(complete_marker_path);
+    }
+
+    let sidecar_path = telegram_identity_sidecar_path(&handle.local_path);
+    let _ = fs::remove_file(sidecar_path);
+}
+
+fn abort_transfer_if_cancel_requested(handle: &TransferHandle) -> Result<(), String> {
+    if is_transfer_cancel_requested(handle) {
+        return Err(TRANSFER_CANCELLED_ERROR.to_string());
+    }
+
+    Ok(())
+}
+
 fn mark_transfer_failed(handle: &TransferHandle, message: String) {
     let (lock, condvar) = &*handle.inner;
     if let Ok(mut progress) = lock.lock() {
+        progress.cancelled = false;
+        progress.ready_for_preview = false;
         progress.error = Some(message);
         condvar.notify_all();
     }
+}
+
+fn mark_transfer_cancelled(handle: &TransferHandle) {
+    cleanup_transfer_artifacts(handle);
+
+    let (lock, condvar) = &*handle.inner;
+    if let Ok(mut progress) = lock.lock() {
+        progress.cancelled = true;
+        progress.complete = false;
+        progress.ready_for_preview = false;
+        progress.download_speed = 0;
+        progress.error = None;
+        condvar.notify_all();
+    }
+}
+
+fn reset_transfer_for_retry(handle: &TransferHandle) -> Result<(), String> {
+    cleanup_transfer_artifacts(handle);
+    handle.cancel_requested.store(false, Ordering::SeqCst);
+
+    let (lock, condvar) = &*handle.inner;
+    let mut progress = lock.lock().map_err(|_| "状态已损坏".to_string())?;
+    *progress = TransferProgress::default();
+    condvar.notify_all();
+    handle.worker_started.store(false, Ordering::SeqCst);
+    Ok(())
 }
 
 fn spawn_transfer(
@@ -701,14 +760,22 @@ fn spawn_transfer(
             limiter.acquire();
         }
 
-        let result = match handle.kind {
-            TransferKind::Download if threads > 1 => {
-                multi_thread_download(&handle, threads)
+        let result = if let Err(error) = abort_transfer_if_cancel_requested(&handle) {
+            Err(error)
+        } else {
+            match handle.kind {
+                TransferKind::Download if threads > 1 => {
+                    multi_thread_download(&handle, threads)
+                }
+                _ => stream_transfer_to_path(&handle),
             }
-            _ => stream_transfer_to_path(&handle),
         };
 
-        if let Err(error) = result {
+        if matches!(result, Err(ref error) if error == TRANSFER_CANCELLED_ERROR)
+            || is_transfer_cancel_requested(&handle)
+        {
+            mark_transfer_cancelled(&handle);
+        } else if let Err(error) = result {
             mark_transfer_failed(&handle, error);
         }
 
@@ -720,6 +787,7 @@ fn spawn_transfer(
 
 fn stream_transfer_to_path(handle: &TransferHandle) -> Result<(), String> {
     ensure_parent_dir(&handle.local_path)?;
+    abort_transfer_if_cancel_requested(handle)?;
 
     if let Some(complete_marker_path) = &handle.complete_marker_path {
         if complete_marker_path.exists() && handle.local_path.exists() {
@@ -745,6 +813,7 @@ fn stream_transfer_to_path(handle: &TransferHandle) -> Result<(), String> {
             let _ = fs::remove_file(complete_marker_path);
         }
     }
+    abort_transfer_if_cancel_requested(handle)?;
 
     let client = build_http_client()?;
     let mut response = client
@@ -770,6 +839,7 @@ fn stream_transfer_to_path(handle: &TransferHandle) -> Result<(), String> {
     let mut buffer = [0_u8; 64 * 1024];
 
     loop {
+        abort_transfer_if_cancel_requested(handle)?;
         let read = response
             .read(&mut buffer)
             .map_err(|error| format!("读取视频流失败: {error}"))?;
@@ -781,6 +851,7 @@ fn stream_transfer_to_path(handle: &TransferHandle) -> Result<(), String> {
             .map_err(|error| format!("写入本地预览缓存失败: {error}"))?;
         file.flush()
             .map_err(|error| format!("刷新本地预览缓存失败: {error}"))?;
+        abort_transfer_if_cancel_requested(handle)?;
 
         let (lock, condvar) = &*handle.inner;
         let mut progress = lock.lock().map_err(|_| "缓存状态已损坏".to_string())?;
@@ -814,6 +885,7 @@ fn stream_transfer_to_path(handle: &TransferHandle) -> Result<(), String> {
 
 fn multi_thread_download(handle: &TransferHandle, num_threads: u32) -> Result<(), String> {
     ensure_parent_dir(&handle.local_path)?;
+    abort_transfer_if_cancel_requested(handle)?;
 
     if num_threads < MIN_THREADS_PER_DOWNLOAD {
         return Err(format!(
@@ -881,9 +953,18 @@ fn multi_thread_download(handle: &TransferHandle, num_threads: u32) -> Result<()
         let downloaded = Arc::clone(&shared_downloaded);
         let error = Arc::clone(&shared_error);
         let progress_inner = Arc::clone(&handle.inner);
+        let cancel_requested = Arc::clone(&handle.cancel_requested);
 
         thread_handles.push(thread::spawn(move || {
-            if let Err(e) = download_chunk(&url, &path, start, end, &downloaded, &progress_inner) {
+            if let Err(e) = download_chunk(
+                &url,
+                &path,
+                start,
+                end,
+                &downloaded,
+                cancel_requested,
+                progress_inner,
+            ) {
                 let mut err_lock = error.lock().unwrap();
                 if err_lock.is_none() {
                     *err_lock = Some(e);
@@ -897,7 +978,7 @@ fn multi_thread_download(handle: &TransferHandle, num_threads: u32) -> Result<()
     }
 
     if let Some(error) = shared_error.lock().unwrap().take() {
-        let _ = fs::remove_file(&handle.local_path);
+        cleanup_transfer_artifacts(handle);
         return Err(error);
     }
 
@@ -917,8 +998,13 @@ fn download_chunk(
     start: u64,
     end: u64,
     shared_downloaded: &AtomicU64,
-    progress_inner: &Arc<(Mutex<TransferProgress>, Condvar)>,
+    cancel_requested: Arc<AtomicBool>,
+    progress_inner: Arc<(Mutex<TransferProgress>, Condvar)>,
 ) -> Result<(), String> {
+    if cancel_requested.load(Ordering::SeqCst) {
+        return Err(TRANSFER_CANCELLED_ERROR.to_string());
+    }
+
     let client = build_http_client()?;
     let range = format!("bytes={}-{}", start, end);
 
@@ -942,6 +1028,10 @@ fn download_chunk(
 
     let mut buffer = [0_u8; 64 * 1024];
     loop {
+        if cancel_requested.load(Ordering::SeqCst) {
+            return Err(TRANSFER_CANCELLED_ERROR.to_string());
+        }
+
         let read = response
             .read(&mut buffer)
             .map_err(|e| format!("读取分片数据失败: {e}"))?;
@@ -951,11 +1041,14 @@ fn download_chunk(
 
         file.write_all(&buffer[..read])
             .map_err(|e| format!("写入分片数据失败: {e}"))?;
+        if cancel_requested.load(Ordering::SeqCst) {
+            return Err(TRANSFER_CANCELLED_ERROR.to_string());
+        }
 
         let total_downloaded =
             shared_downloaded.fetch_add(read as u64, Ordering::Relaxed) + read as u64;
 
-        let (lock, condvar) = &**progress_inner;
+        let (lock, condvar) = &*progress_inner;
         if let Ok(mut progress) = lock.lock() {
             progress.downloaded_bytes = total_downloaded;
             condvar.notify_all();
@@ -977,14 +1070,15 @@ fn spawn_progress_emitter(
                 Err(_) => break,
             };
 
-            let is_terminal = status.state == "completed" || status.state == "error";
+            let is_terminal =
+                status.state == "completed" || status.state == "error" || status.state == "cancelled";
             let _ = app.emit("desktop-transfer-progress", &status);
 
             if is_terminal {
                 break;
             }
 
-            thread::sleep(Duration::from_millis(250));
+            thread::sleep(TRANSFER_PROGRESS_EMIT_INTERVAL);
         }
     });
 }
@@ -992,7 +1086,7 @@ fn spawn_progress_emitter(
 fn refresh_download_speed(progress: &mut TransferProgress) {
     let now = Instant::now();
 
-    if progress.complete || progress.error.is_some() {
+    if progress.complete || progress.cancelled || progress.error.is_some() {
         progress.download_speed = 0;
         progress.last_speed_sample_bytes = progress.downloaded_bytes;
         progress.last_speed_sample_at = Some(now);
@@ -1002,7 +1096,7 @@ fn refresh_download_speed(progress: &mut TransferProgress) {
     match progress.last_speed_sample_at {
         Some(last_at) => {
             let elapsed = now.saturating_duration_since(last_at);
-            if elapsed >= Duration::from_millis(250) {
+            if elapsed >= TRANSFER_SPEED_SAMPLE_INTERVAL {
                 let delta = progress
                     .downloaded_bytes
                     .saturating_sub(progress.last_speed_sample_bytes);
@@ -1027,6 +1121,7 @@ fn snapshot_transfer_status(transfer_id: &str, handle: &TransferHandle) -> Resul
     let (lock, _) = &*handle.inner;
     let mut progress = lock.lock().map_err(|_| "缓存状态已损坏".to_string())?;
     refresh_download_speed(&mut progress);
+    let cancel_requested = is_transfer_cancel_requested(handle);
 
     let progress_percent = progress.total_bytes.map_or(0.0, |total| {
         if total == 0 {
@@ -1036,7 +1131,11 @@ fn snapshot_transfer_status(transfer_id: &str, handle: &TransferHandle) -> Resul
         }
     });
 
-    let state = if progress.error.is_some() {
+    let state = if progress.cancelled {
+        "cancelled"
+    } else if cancel_requested && progress.error.is_none() && !progress.complete {
+        "cancelling"
+    } else if progress.error.is_some() {
         "error"
     } else if progress.complete {
         "completed"
@@ -1067,6 +1166,10 @@ fn wait_for_available_bytes(handle: &TransferHandle, needed_bytes: u64) -> Resul
     let mut progress = lock.lock().map_err(|_| "缓存状态已损坏".to_string())?;
 
     loop {
+        if progress.cancelled || is_transfer_cancel_requested(handle) {
+            return Err("传输已取消".to_string());
+        }
+
         if let Some(error) = &progress.error {
             return Err(error.clone());
         }
@@ -1079,6 +1182,7 @@ fn wait_for_available_bytes(handle: &TransferHandle, needed_bytes: u64) -> Resul
                 last_speed_sample_bytes: progress.last_speed_sample_bytes,
                 last_speed_sample_at: progress.last_speed_sample_at,
                 complete: progress.complete,
+                cancelled: progress.cancelled,
                 ready_for_preview: progress.ready_for_preview,
                 error: progress.error.clone(),
             });
@@ -1643,6 +1747,162 @@ fn desktop_get_transfer_status(
     snapshot_transfer_status(&transfer_id, &handle)
 }
 
+fn get_download_handle(
+    state: &tauri::State<'_, DesktopRuntimeState>,
+    transfer_id: &str,
+) -> Result<Arc<TransferHandle>, String> {
+    state
+        .download_sessions
+        .lock()
+        .map_err(|_| "本地下载会话已损坏".to_string())?
+        .get(transfer_id)
+        .cloned()
+        .ok_or_else(|| "未找到本地下载任务".to_string())
+}
+
+#[tauri::command]
+fn desktop_cancel_download(
+    state: tauri::State<'_, DesktopRuntimeState>,
+    transfer_id: String,
+) -> Result<DesktopTransferStatus, String> {
+    let handle = get_download_handle(&state, &transfer_id)?;
+
+    handle.cancel_requested.store(true, Ordering::SeqCst);
+    let (_, condvar) = &*handle.inner;
+    condvar.notify_all();
+
+    snapshot_transfer_status(&transfer_id, &handle)
+}
+
+#[tauri::command]
+fn desktop_retry_download(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, DesktopRuntimeState>,
+    transfer_id: String,
+) -> Result<DesktopTransferStatus, String> {
+    let handle = get_download_handle(&state, &transfer_id)?;
+    let status = snapshot_transfer_status(&transfer_id, &handle)?;
+
+    match status.state.as_str() {
+        "error" | "cancelled" => {}
+        "completed" => return Err("已完成任务无需重试".to_string()),
+        "cancelling" => return Err("任务仍在取消中，请稍后重试".to_string()),
+        _ => return Err("只有失败或已取消任务可以重试".to_string()),
+    }
+
+    reset_transfer_for_retry(&handle)?;
+
+    let threads = *state
+        .threads_per_download
+        .lock()
+        .map_err(|_| "读取线程配置失败".to_string())?;
+
+    spawn_transfer(
+        Arc::clone(&handle),
+        Some(Arc::clone(&state.download_limiter)),
+        threads,
+    );
+    spawn_progress_emitter(app, transfer_id.clone(), Arc::clone(&handle));
+
+    snapshot_transfer_status(&transfer_id, &handle)
+}
+
+fn spawn_system_command(command: &mut Command, action: &str) -> Result<(), String> {
+    command
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("{action}失败: {error}"))
+}
+
+fn open_local_path(path: &Path) -> Result<(), String> {
+    if !path.exists() {
+        return Err("目标文件不存在".to_string());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let mut command = Command::new("cmd");
+        command.arg("/C").arg("start").arg("").arg(path);
+        return spawn_system_command(&mut command, "打开文件");
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let mut command = Command::new("open");
+        command.arg(path);
+        return spawn_system_command(&mut command, "打开文件");
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let mut command = Command::new("xdg-open");
+        command.arg(path);
+        return spawn_system_command(&mut command, "打开文件");
+    }
+}
+
+fn show_local_path_in_folder(path: &Path) -> Result<(), String> {
+    let existing_path = if path.exists() {
+        path.to_path_buf()
+    } else if let Some(parent) = path.parent() {
+        if parent.exists() {
+            parent.to_path_buf()
+        } else {
+            return Err("目标目录不存在".to_string());
+        }
+    } else {
+        return Err("目标目录不存在".to_string());
+    };
+
+    #[cfg(target_os = "windows")]
+    {
+        let mut command = Command::new("explorer");
+        if existing_path.is_file() {
+            command.arg(format!("/select,{}", existing_path.display()));
+        } else {
+            command.arg(&existing_path);
+        }
+        return spawn_system_command(&mut command, "打开所在目录");
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let mut command = Command::new("open");
+        if existing_path.is_file() {
+            command.arg("-R").arg(&existing_path);
+        } else {
+            command.arg(&existing_path);
+        }
+        return spawn_system_command(&mut command, "打开所在目录");
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let target = if existing_path.is_dir() {
+            existing_path
+        } else {
+            existing_path
+                .parent()
+                .map(Path::to_path_buf)
+                .ok_or_else(|| "目标目录不存在".to_string())?
+        };
+
+        let mut command = Command::new("xdg-open");
+        command.arg(target);
+        return spawn_system_command(&mut command, "打开所在目录");
+    }
+}
+
+#[tauri::command]
+fn desktop_open_local_file(local_path: String) -> Result<(), String> {
+    open_local_path(Path::new(&local_path))
+}
+
+#[tauri::command]
+fn desktop_show_local_file_in_folder(local_path: String) -> Result<(), String> {
+    show_local_path_in_folder(Path::new(&local_path))
+}
+
 #[tauri::command]
 fn desktop_get_published_update_info() -> Result<DesktopPublishedUpdateInfo, String> {
     fetch_published_desktop_update_info()
@@ -1684,6 +1944,10 @@ fn main() {
             desktop_prepare_preview_file,
             desktop_start_preview_stream,
             desktop_get_transfer_status,
+            desktop_cancel_download,
+            desktop_retry_download,
+            desktop_open_local_file,
+            desktop_show_local_file_in_folder,
             desktop_get_published_update_info
         ])
         .run(context)

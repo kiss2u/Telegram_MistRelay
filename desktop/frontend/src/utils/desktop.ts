@@ -49,7 +49,7 @@ export interface DesktopTransferStatus {
   totalBytes?: number
   downloadSpeed: number
   progressPercent: number
-  state: 'pending' | 'downloading' | 'ready' | 'completed' | 'error'
+  state: 'pending' | 'downloading' | 'ready' | 'completed' | 'error' | 'cancelling' | 'cancelled'
   readyForPreview: boolean
   error?: string
 }
@@ -136,6 +136,22 @@ export async function startDesktopPreviewStream(payload: {
 
 export async function getDesktopTransferStatus(transferId: string): Promise<DesktopTransferStatus> {
   return invokeDesktopCommand<DesktopTransferStatus>('desktop_get_transfer_status', { transferId })
+}
+
+export async function cancelDesktopDownload(transferId: string): Promise<DesktopTransferStatus> {
+  return invokeDesktopCommand<DesktopTransferStatus>('desktop_cancel_download', { transferId })
+}
+
+export async function retryDesktopDownload(transferId: string): Promise<DesktopTransferStatus> {
+  return invokeDesktopCommand<DesktopTransferStatus>('desktop_retry_download', { transferId })
+}
+
+export async function openDesktopLocalFile(localPath: string): Promise<void> {
+  await invokeDesktopCommand('desktop_open_local_file', { localPath })
+}
+
+export async function showDesktopLocalFileInFolder(localPath: string): Promise<void> {
+  await invokeDesktopCommand('desktop_show_local_file_in_folder', { localPath })
 }
 
 export function toDesktopAssetUrl(localPath: string): string {

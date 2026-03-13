@@ -24,7 +24,7 @@
           </div>
           <div class="stat-item is-danger">
             <span class="stat-item-value">{{ desktopDownloadStats.failed }}</span>
-            <span class="stat-item-label">失败</span>
+            <span class="stat-item-label">失败/取消</span>
           </div>
         </div>
 
@@ -33,7 +33,7 @@
             清空已完成
           </el-button>
           <el-button @click="clearDesktopDownloads('failed')" :disabled="desktopDownloadStats.failed === 0">
-            清空失败
+            清空失败/取消
           </el-button>
           <el-button
             type="danger"
@@ -106,9 +106,40 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="操作" width="170" fixed="right">
+        <el-table-column label="操作" width="320" fixed="right">
           <template #default="{ row }">
             <div class="row-actions">
+              <el-button
+                v-if="canCancelDesktopDownload(row)"
+                link
+                type="warning"
+                @click="cancelDesktopDownloadTask(row.transferId)"
+              >
+                取消
+              </el-button>
+              <el-button
+                v-if="canRetryDesktopDownload(row)"
+                link
+                type="primary"
+                @click="retryDesktopDownloadTask(row.transferId)"
+              >
+                重试
+              </el-button>
+              <el-button
+                v-if="canOpenDesktopDownload(row)"
+                link
+                type="primary"
+                @click="openDesktopDownloadFile(row.localPath)"
+              >
+                打开文件
+              </el-button>
+              <el-button
+                v-if="canOpenDesktopDownload(row)"
+                link
+                @click="showDesktopDownloadInFolder(row.localPath)"
+              >
+                打开目录
+              </el-button>
               <el-button link type="primary" @click="showTaskDetails(row)">查看详情</el-button>
               <el-button
                 link
@@ -141,6 +172,39 @@
         </el-descriptions-item>
         <el-descriptions-item label="传输 ID">{{ selectedTask.transferId }}</el-descriptions-item>
       </el-descriptions>
+      <template #footer>
+        <div v-if="selectedTask" class="dialog-actions">
+          <el-button
+            v-if="canCancelDesktopDownload(selectedTask)"
+            type="warning"
+            plain
+            @click="cancelDesktopDownloadTask(selectedTask.transferId)"
+          >
+            取消下载
+          </el-button>
+          <el-button
+            v-if="canRetryDesktopDownload(selectedTask)"
+            type="primary"
+            plain
+            @click="retryDesktopDownloadTask(selectedTask.transferId)"
+          >
+            重试下载
+          </el-button>
+          <el-button
+            v-if="canOpenDesktopDownload(selectedTask)"
+            @click="openDesktopDownloadFile(selectedTask.localPath)"
+          >
+            打开文件
+          </el-button>
+          <el-button
+            v-if="canOpenDesktopDownload(selectedTask)"
+            @click="showDesktopDownloadInFolder(selectedTask.localPath)"
+          >
+            打开目录
+          </el-button>
+          <el-button @click="detailVisible = false">关闭</el-button>
+        </div>
+      </template>
     </el-dialog>
   </div>
 </template>
@@ -160,11 +224,18 @@ const {
   desktopDownloadList,
   desktopDownloadStats,
   isDesktopDownloadTerminal,
+  canCancelDesktopDownload,
+  canRetryDesktopDownload,
+  canOpenDesktopDownload,
   getDesktopDownloadLabel,
   getDesktopDownloadTagType,
   getDesktopDownloadProgressStatus,
   formatDesktopDownloadMeta,
   formatDesktopDownloadSpeed,
+  cancelDesktopDownloadTask,
+  retryDesktopDownloadTask,
+  openDesktopDownloadFile,
+  showDesktopDownloadInFolder,
   removeDesktopDownload,
   clearDesktopDownloads,
 } = useDesktopDownloads()
@@ -237,7 +308,7 @@ function showTaskDetails(task: DesktopTransferStatus) {
 }
 
 .row-actions {
-  @apply flex items-center gap-3;
+  @apply flex flex-wrap items-center gap-3;
 }
 
 .size-text {
@@ -257,6 +328,10 @@ function showTaskDetails(task: DesktopTransferStatus) {
 
 .error-text {
   @apply text-sm text-red-500;
+}
+
+.dialog-actions {
+  @apply flex flex-wrap justify-end gap-3;
 }
 
 .no-error {

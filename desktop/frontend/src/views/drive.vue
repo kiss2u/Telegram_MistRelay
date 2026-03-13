@@ -76,6 +76,15 @@
 
       <div class="drive-topbar">
         <div class="drive-controls">
+          <el-button
+            class="drive-nav-button"
+            :icon="ArrowLeft"
+            :disabled="!canNavigateUp"
+            @click="navigateUp"
+          >
+            {{ currentTelegramGroupId ? '返回列表' : '返回上级' }}
+          </el-button>
+
           <div class="drive-breadcrumb-card">
             <el-breadcrumb separator="/">
               <el-breadcrumb-item @click="navigateToPath('/')">
@@ -468,7 +477,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { HomeFilled, Document, Folder, Search, List, Grid, Picture, VideoPlay, Sort, Download, Delete, RefreshRight } from '@element-plus/icons-vue'
+import { HomeFilled, Document, Folder, Search, List, Grid, Picture, VideoPlay, Sort, Download, Delete, RefreshRight, ArrowLeft } from '@element-plus/icons-vue'
 import { getRcloneRemotes, browseDrive, getThumbnail, deleteFile, getDriveUsage, browseTelegram, getTelegramUsage, deleteTelegramItem, deleteTelegramGroup, clearTelegramMedia, type RcloneRemote, type DriveItem, type DriveUsageResponse, type TelegramMediaItem, type TelegramUsageStats } from '@/api'
 import VideoPlayer from '@/components/VideoPlayer.vue'
 import {
@@ -588,6 +597,21 @@ const currentTelegramGroupId = computed(() => (
     ? currentPath.value.slice(TELEGRAM_GROUP_PATH_PREFIX.length)
     : null
 ))
+
+const parentPath = computed(() => {
+  if (isTelegramMode.value) {
+    return currentTelegramGroupId.value ? '/' : null
+  }
+
+  const path = currentPath.value || '/'
+  if (path === '/') return null
+
+  const segments = path.split('/').filter(Boolean)
+  if (segments.length <= 1) return '/'
+  return `/${segments.slice(0, -1).join('/')}`
+})
+
+const canNavigateUp = computed(() => parentPath.value !== null)
 
 const breadcrumbSegments = computed(() => {
   if (isTelegramMode.value) {
@@ -1549,6 +1573,11 @@ function navigateToPath(path: string) {
   browse()
 }
 
+function navigateUp() {
+  if (!parentPath.value) return
+  navigateToPath(parentPath.value)
+}
+
 // 格式化文件大小
 function formatBytes(bytes: number | undefined): string {
   if (!bytes || bytes === 0) return '0 B'
@@ -1696,6 +1725,10 @@ watch(paginatedItems, () => {
 .drive-breadcrumb-card {
   flex: 1;
   min-width: 240px;
+}
+
+.drive-nav-button {
+  flex: 0 0 auto;
 }
 
 .drive-actions {

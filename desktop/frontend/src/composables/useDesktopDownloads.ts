@@ -1,6 +1,10 @@
 import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
+  cancelDesktopDownload,
+  openDesktopLocalFile,
+  retryDesktopDownload,
+  showDesktopLocalFileInFolder,
   startDesktopDownload,
   type DesktopTransferStatus,
 } from '@/utils/desktop'
@@ -36,6 +40,12 @@ function handleTransferProgress(status: DesktopTransferStatus) {
       downloadingPaths.value = { ...downloadingPaths.value, [pathKey]: false }
     }
     ElMessage.success(`已下载到本地: ${status.localPath}`)
+  } else if (status.state === 'cancelled') {
+    notifiedTransfers.add(status.transferId)
+    if (pathKey) {
+      downloadingPaths.value = { ...downloadingPaths.value, [pathKey]: false }
+    }
+    ElMessage.info(`已取消下载: ${status.fileName}`)
   } else if (status.state === 'error') {
     notifiedTransfers.add(status.transferId)
     if (pathKey) {
@@ -58,7 +68,7 @@ function ensureProgressListener() {
 }
 
 function getDesktopDownloadStateScore(value: DesktopTransferStatus['state']): number {
-  if (value === 'downloading' || value === 'pending') return 0
+  if (value === 'downloading' || value === 'pending' || value === 'cancelling') return 0
   if (value === 'completed') return 1
   return 2
 }
@@ -73,7 +83,7 @@ const desktopDownloadStats = computed(() => {
   return desktopDownloadList.value.reduce(
     (acc, task) => {
       if (task.state === 'completed') acc.completed += 1
-      else if (task.state === 'error') acc.failed += 1
+      else if (task.state === 'error' || task.state === 'cancelled') acc.failed += 1
       else acc.active += 1
       return acc
     },
@@ -82,12 +92,26 @@ const desktopDownloadStats = computed(() => {
 })
 
 function isDesktopDownloadTerminal(task: DesktopTransferStatus): boolean {
-  return task.state === 'completed' || task.state === 'error'
+  return task.state === 'completed' || task.state === 'error' || task.state === 'cancelled'
+}
+
+function canCancelDesktopDownload(task: DesktopTransferStatus): boolean {
+  return task.state === 'pending' || task.state === 'downloading'
+}
+
+function canRetryDesktopDownload(task: DesktopTransferStatus): boolean {
+  return task.state === 'error' || task.state === 'cancelled'
+}
+
+function canOpenDesktopDownload(task: DesktopTransferStatus): boolean {
+  return task.state === 'completed'
 }
 
 function getDesktopDownloadLabel(task: DesktopTransferStatus): string {
   if (task.state === 'completed') return '已完成'
   if (task.state === 'error') return '失败'
+  if (task.state === 'cancelled') return '已取消'
+  if (task.state === 'cancelling') return '取消中'
   if (task.state === 'pending') return '等待中'
   return '下载中'
 }
@@ -95,6 +119,7 @@ function getDesktopDownloadLabel(task: DesktopTransferStatus): string {
 function getDesktopDownloadTagType(task: DesktopTransferStatus): 'success' | 'danger' | 'warning' | 'info' {
   if (task.state === 'completed') return 'success'
   if (task.state === 'error') return 'danger'
+  if (task.state === 'cancelled') return 'info'
   if (task.state === 'pending') return 'info'
   return 'warning'
 }
@@ -102,6 +127,7 @@ function getDesktopDownloadTagType(task: DesktopTransferStatus): 'success' | 'da
 function getDesktopDownloadProgressStatus(task: DesktopTransferStatus): '' | 'success' | 'exception' | 'warning' {
   if (task.state === 'completed') return 'success'
   if (task.state === 'error') return 'exception'
+  if (task.state === 'cancelled') return 'warning'
   return 'warning'
 }
 
@@ -121,11 +147,65 @@ function formatDesktopDownloadMeta(task: DesktopTransferStatus): string {
 }
 
 function formatDesktopDownloadSpeed(task: DesktopTransferStatus): string {
-  if (task.state !== 'downloading' || !task.downloadSpeed || task.downloadSpeed <= 0) {
+  if (
+    task.state !== 'downloading' ||
+    !task.downloadSpeed ||
+    task.downloadSpeed <= 0
+  ) {
     return '-'
   }
 
   return `${formatDesktopBytes(task.downloadSpeed)}/s`
+}
+
+function updateDesktopDownloadStatus(status: DesktopTransferStatus): void {
+  desktopDownloadStatuses.value = {
+    ...desktopDownloadStatuses.value,
+    [status.transferId]: status,
+  }
+}
+
+async function cancelDesktopDownloadTask(transferId: string): Promise<void> {
+  try {
+    const status = await cancelDesktopDownload(transferId)
+    updateDesktopDownloadStatus(status)
+    ElMessage.info(`正在取消: ${status.fileName}`)
+  } catch (err: any) {
+    ElMessage.error(err.message || '取消下载失败')
+  }
+}
+
+async function retryDesktopDownloadTask(transferId: string): Promise<void> {
+  try {
+    const status = await retryDesktopDownload(transferId)
+    const pathKey = transferPathKeys[transferId]
+
+    if (pathKey) {
+      downloadingPaths.value = { ...downloadingPaths.value, [pathKey]: true }
+    }
+
+    notifiedTransfers.delete(transferId)
+    updateDesktopDownloadStatus(status)
+    ElMessage.success(`已重新开始下载: ${status.fileName}`)
+  } catch (err: any) {
+    ElMessage.error(err.message || '重试下载失败')
+  }
+}
+
+async function openDesktopDownloadFile(localPath: string): Promise<void> {
+  try {
+    await openDesktopLocalFile(localPath)
+  } catch (err: any) {
+    ElMessage.error(err.message || '打开文件失败')
+  }
+}
+
+async function showDesktopDownloadInFolder(localPath: string): Promise<void> {
+  try {
+    await showDesktopLocalFileInFolder(localPath)
+  } catch (err: any) {
+    ElMessage.error(err.message || '打开目录失败')
+  }
 }
 
 function removeDesktopDownload(transferId: string): void {
@@ -153,7 +233,7 @@ function clearDesktopDownloads(mode: 'completed' | 'failed' | 'all'): void {
     if (mode === 'completed') {
       return task.state !== 'completed'
     }
-    return task.state !== 'error'
+    return task.state !== 'error' && task.state !== 'cancelled'
   }))
 
   const removedIds = entries
@@ -161,7 +241,9 @@ function clearDesktopDownloads(mode: 'completed' | 'failed' | 'all'): void {
       if (mode === 'all') {
         return isDesktopDownloadTerminal(task)
       }
-      return mode === 'completed' ? task.state === 'completed' : task.state === 'error'
+      return mode === 'completed'
+        ? task.state === 'completed'
+        : task.state === 'error' || task.state === 'cancelled'
     })
     .map(([transferId]) => transferId)
 
@@ -234,11 +316,18 @@ export function useDesktopDownloads() {
     desktopDownloadList,
     desktopDownloadStats,
     isDesktopDownloadTerminal,
+    canCancelDesktopDownload,
+    canRetryDesktopDownload,
+    canOpenDesktopDownload,
     getDesktopDownloadLabel,
     getDesktopDownloadTagType,
     getDesktopDownloadProgressStatus,
     formatDesktopDownloadMeta,
     formatDesktopDownloadSpeed,
+    cancelDesktopDownloadTask,
+    retryDesktopDownloadTask,
+    openDesktopDownloadFile,
+    showDesktopDownloadInFolder,
     removeDesktopDownload,
     clearDesktopDownloads,
     startTrackedDesktopDownload,
