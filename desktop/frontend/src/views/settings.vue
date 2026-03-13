@@ -488,7 +488,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getConfig, updateConfig, reloadConfig, getRcloneConfig, saveRcloneConfig, getRcloneRemotes, type RcloneRemote } from '@/api'
 import { useAuthStore } from '@/stores/auth'
@@ -565,6 +565,13 @@ const rcloneConfigLastSaved = ref('')
 const availableRemotes = ref<RcloneRemote[]>([])
 const configCategories = ['telegram', 'rclone', 'download', 'aria2', 'stream'] as const
 type ConfigCategory = typeof configCategories[number]
+const loadedClientTabs = ref({
+  proxy: false,
+  download: false,
+})
+const loadedServerCategories = ref<Partial<Record<ConfigCategory, boolean>>>({})
+const rcloneConfigLoaded = ref(false)
+const rcloneRemotesLoaded = ref(false)
 
 const effectiveServerUrlLabel = computed(() => clientServerUrl.value || '同源 /api')
 const connectionStatusLabel = computed(() => {
@@ -751,6 +758,10 @@ async function loadDesktopProxyConfig(showMessage = false) {
     desktopProxyStatusText.value = config.proxy.enabled
       ? `当前客户端重启后会通过 ${config.proxy.url} 走全局代理`
       : '当前客户端处于直连模式，不使用全局代理'
+    loadedClientTabs.value = {
+      ...loadedClientTabs.value,
+      proxy: true,
+    }
 
     if (showMessage) {
       ElMessage.success('桌面代理配置已读取')
@@ -840,6 +851,10 @@ async function loadDownloadConfig(showMessage = false) {
     desktopDownloadDir.value = downloadConfig.downloadDir ?? ''
     desktopMaxConcurrent.value = downloadConfig.maxConcurrentDownloads
     desktopThreadsPerDownload.value = downloadConfig.threadsPerDownload
+    loadedClientTabs.value = {
+      ...loadedClientTabs.value,
+      download: true,
+    }
     if (showMessage) {
       ElMessage.success('本地下载配置已读取')
     }
@@ -967,20 +982,26 @@ async function handleInstallUpdate() {
   }
 }
 
-async function fetchConfigs() {
+async function loadServerConfigCategory(category: ConfigCategory, force = false) {
+  if (!force && loadedServerCategories.value[category]) {
+    return
+  }
+
   try {
-    for (const category of configCategories) {
-      const response = await getConfig(category)
-      if (response.success && response.data) {
-        configs.value[category] = {
-          ...configs.value[category],
-          ...response.data
-        }
+    const response = await getConfig(category)
+    if (response.success && response.data) {
+      configs.value[category] = {
+        ...configs.value[category],
+        ...response.data
+      }
+      loadedServerCategories.value = {
+        ...loadedServerCategories.value,
+        [category]: true,
       }
     }
   } catch (err) {
-    console.error('获取配置失败:', err)
-    ElMessage.error('获取配置失败')
+    console.error(`获取 ${category} 配置失败:`, err)
+    ElMessage.error(`获取${category}配置失败`)
   }
 }
 
@@ -1004,7 +1025,7 @@ async function saveConfig(category: ConfigCategory) {
       } else {
         ElMessage.success(response.message || '配置已保存，下次使用时将从数据库读取最新配置')
       }
-      await fetchConfigs()
+      await loadServerConfigCategory(category, true)
     } else {
       ElMessage.error(response.error || '配置保存失败')
     }
@@ -1034,7 +1055,8 @@ async function handleReloadConfig() {
       const response = await reloadConfig()
       if (response.success) {
         ElMessage.success(response.message || '配置已从config.yml重新导入到数据库')
-        await fetchConfigs()
+        loadedServerCategories.value = {}
+        await loadServerConfigCategory(activeServerTab.value as ConfigCategory, true)
       } else {
         ElMessage.error(response.error || '配置导入失败')
       }
@@ -1052,17 +1074,20 @@ async function handleReloadConfig() {
   }
 }
 
-async function loadRcloneConfigFile() {
+async function loadRcloneConfigFile(showMessage = false) {
   loadingRcloneConfig.value = true
   try {
     const response = await getRcloneConfig()
     if (response.success) {
       rcloneConfigContent.value = response.content || ''
       rcloneConfigPath.value = response.file_path || '/root/.config/rclone/rclone.conf'
-      if (!response.exists) {
-        ElMessage.info(response.message || '配置文件不存在')
-      } else {
-        ElMessage.success('配置文件加载成功')
+      rcloneConfigLoaded.value = true
+      if (showMessage) {
+        if (!response.exists) {
+          ElMessage.info(response.message || '配置文件不存在')
+        } else {
+          ElMessage.success('配置文件加载成功')
+        }
       }
       rcloneConfigLastSaved.value = ''
     } else {
@@ -1101,8 +1126,10 @@ async function saveRcloneConfigFile() {
         ElMessage.success(response.message || '配置文件保存成功')
         const now = new Date()
         rcloneConfigLastSaved.value = `最后保存: ${now.toLocaleString()}`
-        await loadRcloneConfigFile()
-        await loadRcloneRemotes()
+        await Promise.all([
+          loadRcloneConfigFile(false),
+          loadRcloneRemotes(),
+        ])
       } else {
         ElMessage.error(response.error || '保存配置文件失败')
       }
@@ -1124,6 +1151,7 @@ async function loadRcloneRemotes() {
     const response = await getRcloneRemotes()
     if (response.success && response.remotes) {
       availableRemotes.value = response.remotes
+      rcloneRemotesLoaded.value = true
     } else {
       availableRemotes.value = []
     }
@@ -1133,13 +1161,64 @@ async function loadRcloneRemotes() {
   }
 }
 
+async function ensureClientTabLoaded(tab: string) {
+  if (tab === 'proxy' && !loadedClientTabs.value.proxy) {
+    await loadDesktopProxyConfig()
+    return
+  }
+
+  if (tab === 'download' && !loadedClientTabs.value.download) {
+    await loadDownloadConfig()
+  }
+}
+
+async function ensureServerTabLoaded(tab: string) {
+  if (!configCategories.includes(tab as ConfigCategory)) {
+    return
+  }
+
+  const category = tab as ConfigCategory
+  const tasks: Promise<unknown>[] = [loadServerConfigCategory(category)]
+
+  if (category === 'rclone') {
+    if (!rcloneConfigLoaded.value) {
+      tasks.push(loadRcloneConfigFile(false))
+    }
+    if (!rcloneRemotesLoaded.value) {
+      tasks.push(loadRcloneRemotes())
+    }
+  }
+
+  await Promise.all(tasks)
+}
+
 onMounted(() => {
-  fetchConfigs()
   void testConnection(false)
-  void loadDesktopProxyConfig()
-  void loadDownloadConfig()
-  loadRcloneConfigFile()
-  loadRcloneRemotes()
+  if (settingsScope.value === 'client') {
+    void ensureClientTabLoaded(activeClientTab.value)
+  } else {
+    void ensureServerTabLoaded(activeServerTab.value)
+  }
+})
+
+watch(settingsScope, (scope) => {
+  if (scope === 'client') {
+    void ensureClientTabLoaded(activeClientTab.value)
+  } else {
+    void ensureServerTabLoaded(activeServerTab.value)
+  }
+})
+
+watch(activeClientTab, (tab) => {
+  if (settingsScope.value === 'client') {
+    void ensureClientTabLoaded(tab)
+  }
+})
+
+watch(activeServerTab, (tab) => {
+  if (settingsScope.value === 'server') {
+    void ensureServerTabLoaded(tab)
+  }
 })
 </script>
 

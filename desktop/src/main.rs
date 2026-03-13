@@ -25,6 +25,66 @@ const DESKTOP_UPDATER_MANIFEST_URL: &str =
     "https://github.com/qianlong520/Telegram_MistRelay/releases/latest/download/latest.json";
 const MISTRELAY_MIN_THREADS_HEADER: &str = "x-mistrelay-min-threads";
 
+fn parse_total_size_from_content_range(value: &str) -> Option<u64> {
+    let (_, total) = value.split_once('/')?;
+    total.trim().parse::<u64>().ok()
+}
+
+fn parse_server_min_threads(headers: &header::HeaderMap) -> u32 {
+    headers
+        .get(MISTRELAY_MIN_THREADS_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u32>().ok())
+        .unwrap_or(MIN_THREADS_PER_DOWNLOAD)
+        .max(MIN_THREADS_PER_DOWNLOAD)
+}
+
+fn probe_multi_download_capability(
+    client: &Client,
+    source_url: &str,
+) -> Result<(bool, Option<u64>, u32), String> {
+    let head_resp = client
+        .head(source_url)
+        .send()
+        .map_err(|e| format!("HEAD 请求失败: {e}"))?;
+
+    let mut accepts_ranges = head_resp
+        .headers()
+        .get(header::ACCEPT_RANGES)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.eq_ignore_ascii_case("bytes"))
+        .unwrap_or(false);
+    let mut total_size = head_resp.content_length().filter(|value| *value > 0);
+    let mut server_min_threads = parse_server_min_threads(head_resp.headers());
+
+    if accepts_ranges && total_size.is_some() {
+        return Ok((accepts_ranges, total_size, server_min_threads));
+    }
+
+    let probe_resp = client
+        .get(source_url)
+        .header(header::RANGE, "bytes=0-0")
+        .send()
+        .map_err(|e| format!("Range 探测失败: {e}"))?;
+
+    if probe_resp.status() == StatusCode::PARTIAL_CONTENT {
+        accepts_ranges = true;
+    }
+
+    if total_size.is_none() {
+        total_size = probe_resp
+            .headers()
+            .get(header::CONTENT_RANGE)
+            .and_then(|value| value.to_str().ok())
+            .and_then(parse_total_size_from_content_range)
+            .or_else(|| probe_resp.content_length().filter(|value| *value > 0));
+    }
+
+    server_min_threads = server_min_threads.max(parse_server_min_threads(probe_resp.headers()));
+
+    Ok((accepts_ranges, total_size, server_min_threads))
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 struct DesktopProxyConfig {
@@ -654,25 +714,8 @@ fn multi_thread_download(handle: &TransferHandle, num_threads: u32) -> Result<()
     }
 
     let client = build_http_client()?;
-    let head_resp = client
-        .head(&handle.source_url)
-        .send()
-        .map_err(|e| format!("HEAD 请求失败: {e}"))?;
-
-    let accepts_ranges = head_resp
-        .headers()
-        .get(header::ACCEPT_RANGES)
-        .and_then(|v| v.to_str().ok())
-        .map(|v| v.eq_ignore_ascii_case("bytes"))
-        .unwrap_or(false);
-    let total_size = head_resp.content_length();
-    let server_min_threads = head_resp
-        .headers()
-        .get(MISTRELAY_MIN_THREADS_HEADER)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.parse::<u32>().ok())
-        .unwrap_or(MIN_THREADS_PER_DOWNLOAD)
-        .max(MIN_THREADS_PER_DOWNLOAD);
+    let (accepts_ranges, total_size, server_min_threads) =
+        probe_multi_download_capability(&client, &handle.source_url)?;
 
     if !accepts_ranges {
         return Err("当前下载源不支持 Range，无法执行强制多连接下载".to_string());
@@ -687,14 +730,15 @@ fn multi_thread_download(handle: &TransferHandle, num_threads: u32) -> Result<()
         return Err("当前下载源返回的文件大小为 0，无法执行多连接下载".to_string());
     }
 
-    let requested_threads = num_threads.max(server_min_threads);
-    let effective_threads = requested_threads.min(total as u32);
-    if effective_threads < server_min_threads {
+    let requested_threads = num_threads.max(server_min_threads) as u64;
+    let effective_threads = requested_threads.min(total);
+    if effective_threads < server_min_threads as u64 {
         return Err(format!(
             "文件过小，无法满足至少 {} 个并发连接的下载要求",
             server_min_threads
         ));
     }
+    let effective_threads = effective_threads as u32;
 
     {
         let (lock, condvar) = &*handle.inner;

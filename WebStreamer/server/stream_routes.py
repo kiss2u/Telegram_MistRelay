@@ -239,10 +239,8 @@ async def api_status_handler(_):
             "telegram_bot": bot_username or "@unknown",
             "connected_bots": len(multi_clients),
             "loads": dict(
-                ("bot" + str(c + 1), l)
-                for c, (_, l) in enumerate(
-                    sorted(work_loads.items(), key=lambda x: x[1], reverse=True)
-                )
+                ("bot" + str(index + 1), work_loads.get(index, 0))
+                for index in sorted(multi_clients.keys())
             ),
             "bot_metrics": dict(
                 (
