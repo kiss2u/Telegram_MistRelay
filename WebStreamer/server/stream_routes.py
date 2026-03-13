@@ -24,7 +24,7 @@ from db import (
     fetch_recent_downloads, get_all_configs, get_config, set_config,
     get_download_id_by_gid, get_download_by_id, get_upload_by_id,
     mark_download_failed, update_upload_status, mark_upload_failed,
-    delete_download_record
+    delete_download_record, browse_tg_media, get_tg_media_stats
 )
 import configer
 
@@ -2497,6 +2497,55 @@ async def media_streamer(request: web.Request, message_id: int, secure_hash: str
         },
     )
 
+# ==================== Telegram 频道浏览 API ====================
+
+@routes.get("/api/telegram/browse", allow_head=True)
+async def telegram_browse_handler(request: web.Request):
+    """浏览 Telegram 频道中已入库的媒体文件（分页、搜索、筛选）"""
+    try:
+        page = int(request.query.get('page', '1'))
+        page_size = int(request.query.get('page_size', '50'))
+        search = request.query.get('search', '').strip() or None
+        mime_filter = request.query.get('type', '').strip() or None
+        sort_by = request.query.get('sort_by', 'message_date')
+        sort_desc = request.query.get('sort_desc', 'true').lower() != 'false'
+
+        page_size = min(page_size, 200)
+
+        result = browse_tg_media(
+            page=page,
+            page_size=page_size,
+            search=search,
+            mime_filter=mime_filter,
+            sort_by=sort_by,
+            sort_desc=sort_desc,
+        )
+
+        hash_len = Var.HASH_LENGTH
+        for item in result['items']:
+            uid = item.get('file_unique_id', '')
+            mid = item.get('message_id')
+            if uid and mid:
+                item['hash'] = utils.get_hash(uid, hash_len)
+                item['stream_url'] = f"{item['hash']}{mid}"
+
+        return web.json_response({"success": True, **result})
+    except Exception as e:
+        logger.error(f"Telegram browse API error: {e}", exc_info=True)
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+@routes.get("/api/telegram/usage", allow_head=True)
+async def telegram_usage_handler(request: web.Request):
+    """获取 Telegram 频道存储统计"""
+    try:
+        stats = get_tg_media_stats()
+        return web.json_response({"success": True, "data": stats})
+    except Exception as e:
+        logger.error(f"Telegram usage API error: {e}", exc_info=True)
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
 @routes.get("/api/rclone/cache/monitor")
 async def monitor_cache_status(request: web.Request):
     """WebSocket monitor for rclone cache status"""
@@ -2537,13 +2586,9 @@ async def monitor_cache_status(request: web.Request):
 
             try:
                 if cache_file.exists():
-                    # rclone cache file is sparse? or fully allocated?
-                    # Usually rclone sparse file support is OS dependent.
-                    # st_blocks * 512 is the actual allocated size on disk.
                     stat = cache_file.stat()
                     cached_size = stat.st_blocks * 512
                     
-                    # Cap cached size at total_size
                     if cached_size > total_size:
                         cached_size = total_size
                     
@@ -2553,6 +2598,8 @@ async def monitor_cache_status(request: web.Request):
                     if cached_size >= total_size or percent >= 100:
                         status = "fully_cached"
                     
+                    if ws.closed:
+                        break
                     await ws.send_json({
                         "status": status,
                         "cached_size": cached_size,
@@ -2563,13 +2610,18 @@ async def monitor_cache_status(request: web.Request):
                     if status == "fully_cached":
                         break
                 else:
-                     await ws.send_json({
+                    if ws.closed:
+                        break
+                    await ws.send_json({
                         "status": "waiting",
                         "cached_size": 0,
                         "total_size": total_size,
                         "percent": 0
                     })
             except Exception as e:
+                if ws.closed or "closing transport" in str(e).lower():
+                    logger.debug("Cache monitor: WebSocket connection closed by client")
+                    break
                 logger.error(f"Error checking cache: {e}", exc_info=True)
                 
             await asyncio.sleep(2) # Poll every 2 seconds

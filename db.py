@@ -1918,6 +1918,128 @@ def ensure_default_admin():
             logger.info("已创建默认管理员账号 admin / admin123，请尽快修改密码")
 
 
+def browse_tg_media(
+    page: int = 1,
+    page_size: int = 50,
+    search: str = None,
+    mime_filter: str = None,
+    sort_by: str = 'message_date',
+    sort_desc: bool = True,
+) -> dict:
+    """
+    分页浏览 tg_media 表中的媒体文件。
+
+    Args:
+        page: 页码（从1开始）
+        page_size: 每页数量
+        search: 搜索关键词（匹配 file_name 或 caption）
+        mime_filter: MIME 类型过滤（video/image/audio/document）
+        sort_by: 排序字段（message_date / file_size / file_name）
+        sort_desc: 是否降序
+
+    Returns:
+        { items: [...], total: int, page: int, page_size: int }
+    """
+    allowed_sort = {'message_date', 'file_size', 'file_name'}
+    if sort_by not in allowed_sort:
+        sort_by = 'message_date'
+
+    conditions = []
+    params: list = []
+
+    if search:
+        conditions.append("(file_name LIKE ? OR caption LIKE ?)")
+        like = f"%{search}%"
+        params.extend([like, like])
+
+    if mime_filter:
+        mime_map = {
+            'video': 'video/%',
+            'image': 'image/%',
+            'audio': 'audio/%',
+            'document': None,
+        }
+        if mime_filter in mime_map:
+            if mime_filter == 'document':
+                conditions.append(
+                    "mime_type NOT LIKE 'video/%' AND mime_type NOT LIKE 'image/%' AND mime_type NOT LIKE 'audio/%'"
+                )
+            else:
+                conditions.append("mime_type LIKE ?")
+                params.append(mime_map[mime_filter])
+
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    order_dir = "DESC" if sort_desc else "ASC"
+    offset = (page - 1) * page_size
+
+    with db_conn() as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+
+        cur.execute(f"SELECT COUNT(*) as cnt FROM tg_media {where}", tuple(params))
+        total = cur.fetchone()['cnt']
+
+        cur.execute(
+            f"""
+            SELECT
+                file_unique_id, chat_id, message_id,
+                file_name, mime_type, file_size,
+                duration, width, height,
+                caption, message_date,
+                media_group_id, supports_streaming
+            FROM tg_media
+            {where}
+            ORDER BY {sort_by} {order_dir}
+            LIMIT ? OFFSET ?
+            """,
+            (*params, page_size, offset),
+        )
+        rows = cur.fetchall()
+        items = [dict(r) for r in rows]
+
+    return {
+        'items': items,
+        'total': total,
+        'page': page,
+        'page_size': page_size,
+    }
+
+
+def get_tg_media_stats() -> dict:
+    """统计 tg_media 表的概览信息。"""
+    with db_conn() as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+
+        cur.execute("SELECT COUNT(*) as cnt, COALESCE(SUM(file_size),0) as total_size FROM tg_media")
+        row = cur.fetchone()
+        total_count = row['cnt']
+        total_size = row['total_size']
+
+        cur.execute(
+            """
+            SELECT
+                SUM(CASE WHEN mime_type LIKE 'video/%' THEN 1 ELSE 0 END) as videos,
+                SUM(CASE WHEN mime_type LIKE 'image/%' THEN 1 ELSE 0 END) as images,
+                SUM(CASE WHEN mime_type LIKE 'audio/%' THEN 1 ELSE 0 END) as audios,
+                SUM(CASE WHEN mime_type NOT LIKE 'video/%'
+                          AND mime_type NOT LIKE 'image/%'
+                          AND mime_type NOT LIKE 'audio/%' THEN 1 ELSE 0 END) as documents
+            FROM tg_media
+            """
+        )
+        type_row = cur.fetchone()
+
+    return {
+        'total_count': total_count,
+        'total_size': total_size,
+        'videos': type_row['videos'] or 0,
+        'images': type_row['images'] or 0,
+        'audios': type_row['audios'] or 0,
+        'documents': type_row['documents'] or 0,
+    }
+
+
 def get_user_by_username(username: str) -> dict | None:
     with db_conn() as conn:
         cur = conn.cursor()

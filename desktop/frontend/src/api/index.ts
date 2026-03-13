@@ -392,6 +392,65 @@ export function getLogDownloadUrl(filename: string): string {
   )
 }
 
+// ==================== Telegram 频道浏览 API ====================
+
+export interface TelegramMediaItem {
+  file_unique_id: string
+  chat_id: number
+  message_id: number
+  file_name: string | null
+  mime_type: string | null
+  file_size: number | null
+  duration: number | null
+  width: number | null
+  height: number | null
+  caption: string | null
+  message_date: string
+  media_group_id: string | null
+  supports_streaming: number
+  hash: string
+  stream_url: string
+}
+
+export interface TelegramBrowseResponse {
+  success: boolean
+  items: TelegramMediaItem[]
+  total: number
+  page: number
+  page_size: number
+  error?: string
+}
+
+export interface TelegramUsageStats {
+  total_count: number
+  total_size: number
+  videos: number
+  images: number
+  audios: number
+  documents: number
+}
+
+export interface TelegramUsageResponse {
+  success: boolean
+  data?: TelegramUsageStats
+  error?: string
+}
+
+export function browseTelegram(params: {
+  page?: number
+  page_size?: number
+  search?: string
+  type?: string
+  sort_by?: string
+  sort_desc?: boolean
+}): Promise<TelegramBrowseResponse> {
+  return api.get<TelegramBrowseResponse>('/telegram/browse', { params }).then(r => r.data)
+}
+
+export function getTelegramUsage(): Promise<TelegramUsageResponse> {
+  return api.get<TelegramUsageResponse>('/telegram/usage').then(r => r.data)
+}
+
 // ==================== 用户认证 API ====================
 
 export interface ChangePasswordResponse {
