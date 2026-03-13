@@ -15,6 +15,7 @@ use std::{
 };
 use reqwest::{blocking::Client, header, Proxy, StatusCode};
 use serde::{Deserialize, Serialize};
+use tauri::Emitter;
 use tauri_plugin_dialog::{DialogExt, FilePath};
 use url::Url;
 
