@@ -407,7 +407,7 @@
         <el-pagination
           v-model:current-page="currentPage"
           v-model:page-size="pageSize"
-          :page-sizes="[20, 50, 100, 200]"
+          :page-sizes="[10, 20, 50, 100, 200]"
           :total="paginationTotal"
           layout="total, sizes, prev, pager, next, jumper"
           background
@@ -531,7 +531,7 @@ const selectedItemPath = ref('')
 // 搜索和分页
 const searchKeyword = ref('')
 const currentPage = ref(1)
-const pageSize = ref(20)
+const pageSize = ref(10)
 
 // 视图模式
 const viewMode = ref<'list' | 'grid'>('list')

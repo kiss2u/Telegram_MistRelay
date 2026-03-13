@@ -475,6 +475,11 @@ fn build_relative_file_path(remote: &str, remote_path: &str, file_name: &str) ->
     let mut relative = PathBuf::new();
     relative.push(sanitize_path_component(remote));
 
+    if remote.eq_ignore_ascii_case("telegram") || remote_path.starts_with("tg://") {
+        relative.push(sanitize_path_component(file_name));
+        return relative;
+    }
+
     for component in Path::new(remote_path).components() {
         if let Component::Normal(part) = component {
             relative.push(sanitize_path_component(&part.to_string_lossy()));
@@ -486,6 +491,107 @@ fn build_relative_file_path(remote: &str, remote_path: &str, file_name: &str) ->
     }
 
     relative
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct TelegramDownloadIdentity {
+    source_hash: String,
+}
+
+fn telegram_identity_sidecar_path(destination: &Path) -> PathBuf {
+    let file_name = destination
+        .file_name()
+        .map(|value| value.to_string_lossy().to_string())
+        .unwrap_or_else(|| "download".to_string());
+    destination.with_file_name(format!("{file_name}.mistrelay.json"))
+}
+
+fn extract_telegram_source_hash(source_url: &str) -> Option<String> {
+    let parsed = Url::parse(source_url).ok()?;
+    parsed
+        .query_pairs()
+        .find_map(|(key, value)| (key == "hash").then(|| value.into_owned()))
+        .filter(|value| !value.trim().is_empty())
+}
+
+fn read_telegram_download_identity(destination: &Path) -> Option<TelegramDownloadIdentity> {
+    let sidecar_path = telegram_identity_sidecar_path(destination);
+    let raw = fs::read_to_string(sidecar_path).ok()?;
+    serde_json::from_str::<TelegramDownloadIdentity>(&raw).ok()
+}
+
+fn write_telegram_download_identity(destination: &Path, source_hash: &str) -> Result<(), String> {
+    let sidecar_path = telegram_identity_sidecar_path(destination);
+    let payload = TelegramDownloadIdentity {
+        source_hash: source_hash.to_string(),
+    };
+    let raw = serde_json::to_string(&payload)
+        .map_err(|error| format!("序列化 Telegram 下载标识失败: {error}"))?;
+    fs::write(sidecar_path, raw).map_err(|error| format!("写入 Telegram 下载标识失败: {error}"))
+}
+
+fn split_file_name(file_name: &str) -> (String, String) {
+    let path = Path::new(file_name);
+    let stem = path
+        .file_stem()
+        .map(|value| value.to_string_lossy().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| sanitize_path_component(file_name));
+    let ext = path
+        .extension()
+        .map(|value| format!(".{}", value.to_string_lossy()))
+        .unwrap_or_default();
+    (stem, ext)
+}
+
+fn resolve_telegram_destination(
+    root_dir: &Path,
+    file_name: &str,
+    source_url: &str,
+) -> PathBuf {
+    let telegram_root = root_dir.join("telegram");
+    let sanitized_file_name = sanitize_path_component(file_name);
+    let preferred = telegram_root.join(&sanitized_file_name);
+    let Some(source_hash) = extract_telegram_source_hash(source_url) else {
+        return preferred;
+    };
+
+    let (stem, ext) = split_file_name(&sanitized_file_name);
+
+    let mut counter: u32 = 1;
+    loop {
+        let candidate = if counter == 1 {
+            preferred.clone()
+        } else {
+            telegram_root.join(format!("{stem} ({counter}){ext}"))
+        };
+
+        if !candidate.exists() {
+            return candidate;
+        }
+
+        let existing_hash = read_telegram_download_identity(&candidate)
+            .map(|identity| identity.source_hash);
+        if existing_hash.as_deref() == Some(source_hash.as_str()) {
+            return candidate;
+        }
+
+        counter = counter.saturating_add(1);
+    }
+}
+
+fn resolve_transfer_destination(
+    root_dir: &Path,
+    remote: &str,
+    remote_path: &str,
+    file_name: &str,
+    source_url: &str,
+) -> PathBuf {
+    if remote.eq_ignore_ascii_case("telegram") || remote_path.starts_with("tg://") {
+        return resolve_telegram_destination(root_dir, file_name, source_url);
+    }
+
+    root_dir.join(build_relative_file_path(remote, remote_path, file_name))
 }
 
 fn default_downloads_root_dir() -> Result<PathBuf, String> {
@@ -560,6 +666,9 @@ fn download_to_path(source_url: &str, destination: &Path) -> Result<(), String> 
     }
 
     fs::rename(&temp_path, destination).map_err(|error| format!("保存文件失败: {error}"))?;
+    if let Some(source_hash) = extract_telegram_source_hash(source_url) {
+        write_telegram_download_identity(destination, &source_hash)?;
+    }
     Ok(())
 }
 
@@ -1322,8 +1431,13 @@ fn desktop_start_download(
     remote_path: String,
     file_name: String,
 ) -> Result<DesktopDownloadSession, String> {
-    let relative_path = build_relative_file_path(&remote, &remote_path, &file_name);
-    let destination = downloads_root_dir()?.join(relative_path);
+    let destination = resolve_transfer_destination(
+        &downloads_root_dir()?,
+        &remote,
+        &remote_path,
+        &file_name,
+        &source_url,
+    );
     let transfer_key = destination.to_string_lossy().to_string();
 
     let handle = {
@@ -1386,8 +1500,13 @@ async fn desktop_download_file(
     remote_path: String,
     file_name: String,
 ) -> Result<DesktopTransferResult, String> {
-    let relative_path = build_relative_file_path(&remote, &remote_path, &file_name);
-    let destination = downloads_root_dir()?.join(relative_path);
+    let destination = resolve_transfer_destination(
+        &downloads_root_dir()?,
+        &remote,
+        &remote_path,
+        &file_name,
+        &source_url,
+    );
     let destination_for_task = destination.clone();
 
     tauri::async_runtime::spawn_blocking(move || download_to_path(&source_url, &destination_for_task))
@@ -1407,8 +1526,13 @@ async fn desktop_prepare_preview_file(
     remote_path: String,
     file_name: String,
 ) -> Result<DesktopTransferResult, String> {
-    let relative_path = build_relative_file_path(&remote, &remote_path, &file_name);
-    let destination = preview_cache_root_dir()?.join(relative_path);
+    let destination = resolve_transfer_destination(
+        &preview_cache_root_dir()?,
+        &remote,
+        &remote_path,
+        &file_name,
+        &source_url,
+    );
 
     if !destination.exists() {
         let destination_for_task = destination.clone();
@@ -1434,8 +1558,13 @@ fn desktop_start_preview_stream(
     remote_path: String,
     file_name: String,
 ) -> Result<DesktopPreviewSession, String> {
-    let relative_path = build_relative_file_path(&remote, &remote_path, &file_name);
-    let destination = preview_cache_root_dir()?.join(relative_path);
+    let destination = resolve_transfer_destination(
+        &preview_cache_root_dir()?,
+        &remote,
+        &remote_path,
+        &file_name,
+        &source_url,
+    );
     let transfer_key = destination.to_string_lossy().to_string();
 
     let handle = {
