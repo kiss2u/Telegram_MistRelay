@@ -349,7 +349,7 @@ fn build_http_client() -> Result<Client, String> {
 }
 
 fn fetch_published_desktop_update_info() -> Result<DesktopPublishedUpdateInfo, String> {
-    let response = build_http_client()?
+    let mut response = build_http_client()?
         .get(DESKTOP_UPDATER_MANIFEST_URL)
         .send()
         .map_err(|error| format!("请求更新清单失败: {error}"))?;
@@ -359,9 +359,13 @@ fn fetch_published_desktop_update_info() -> Result<DesktopPublishedUpdateInfo, S
         return Err(format!("请求更新清单失败: HTTP {status}"));
     }
 
-    let manifest = response
-        .json::<UpdaterManifest>()
-        .map_err(|error| format!("解析更新清单失败: {error}"))?;
+    let mut body = String::new();
+    response
+        .read_to_string(&mut body)
+        .map_err(|error| format!("读取更新清单失败: {error}"))?;
+
+    let manifest =
+        serde_json::from_str::<UpdaterManifest>(&body).map_err(|error| format!("解析更新清单失败: {error}"))?;
 
     Ok(DesktopPublishedUpdateInfo {
         version: manifest.version,
