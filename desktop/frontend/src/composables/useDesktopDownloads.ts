@@ -1,7 +1,6 @@
 import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
-  getDesktopTransferStatus,
   startDesktopDownload,
   type DesktopTransferStatus,
 } from '@/utils/desktop'
@@ -16,59 +15,52 @@ interface StartDesktopDownloadParams {
 
 const downloadingPaths = ref<Record<string, boolean>>({})
 const desktopDownloadStatuses = ref<Record<string, DesktopTransferStatus>>({})
+const transferPathKeys: Record<string, string> = {}
+const notifiedTransfers = new Set<string>()
 
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => window.setTimeout(resolve, ms))
+let listenerActive = false
+
+function handleTransferProgress(status: DesktopTransferStatus) {
+  desktopDownloadStatuses.value = {
+    ...desktopDownloadStatuses.value,
+    [status.transferId]: status,
+  }
+
+  if (notifiedTransfers.has(status.transferId)) return
+
+  const pathKey = transferPathKeys[status.transferId]
+
+  if (status.state === 'completed') {
+    notifiedTransfers.add(status.transferId)
+    if (pathKey) {
+      downloadingPaths.value = { ...downloadingPaths.value, [pathKey]: false }
+    }
+    ElMessage.success(`已下载到本地: ${status.localPath}`)
+  } else if (status.state === 'error') {
+    notifiedTransfers.add(status.transferId)
+    if (pathKey) {
+      downloadingPaths.value = { ...downloadingPaths.value, [pathKey]: false }
+    }
+    ElMessage.error(status.error || '桌面端下载失败')
+  }
+}
+
+function ensureProgressListener() {
+  if (listenerActive) return
+  listenerActive = true
+
+  const listen = window.__TAURI__?.event?.listen
+  if (!listen) return
+
+  listen<DesktopTransferStatus>('desktop-transfer-progress', (event) => {
+    handleTransferProgress(event.payload)
+  })
 }
 
 function getDesktopDownloadStateScore(value: DesktopTransferStatus['state']): number {
   if (value === 'downloading' || value === 'pending') return 0
   if (value === 'completed') return 1
   return 2
-}
-
-async function monitorDesktopDownload(transferId: string, pathKey: string) {
-  let successNotified = false
-
-  try {
-    while (true) {
-      const status = await getDesktopTransferStatus(transferId)
-      desktopDownloadStatuses.value = {
-        ...desktopDownloadStatuses.value,
-        [transferId]: status,
-      }
-
-      if (status.state === 'completed') {
-        downloadingPaths.value = {
-          ...downloadingPaths.value,
-          [pathKey]: false,
-        }
-        if (!successNotified) {
-          ElMessage.success(`已下载到本地: ${status.localPath}`)
-          successNotified = true
-        }
-        return
-      }
-
-      if (status.state === 'error') {
-        downloadingPaths.value = {
-          ...downloadingPaths.value,
-          [pathKey]: false,
-        }
-        ElMessage.error(status.error || '桌面端下载失败')
-        return
-      }
-
-      await sleep(350)
-    }
-  } catch (err: any) {
-    console.error('轮询桌面下载进度失败:', err)
-    downloadingPaths.value = {
-      ...downloadingPaths.value,
-      [pathKey]: false,
-    }
-    ElMessage.error(err.message || '轮询桌面下载进度失败')
-  }
 }
 
 const desktopDownloadList = computed(() => {
@@ -142,6 +134,8 @@ async function startTrackedDesktopDownload(params: StartDesktopDownloadParams): 
       fileName: params.fileName,
     })
 
+    transferPathKeys[session.transferId] = params.pathKey
+
     desktopDownloadStatuses.value = {
       ...desktopDownloadStatuses.value,
       [session.transferId]: {
@@ -156,7 +150,6 @@ async function startTrackedDesktopDownload(params: StartDesktopDownloadParams): 
       },
     }
 
-    void monitorDesktopDownload(session.transferId, params.pathKey)
     return true
   } catch (err: any) {
     console.error('桌面端下载失败:', err)
@@ -170,6 +163,8 @@ async function startTrackedDesktopDownload(params: StartDesktopDownloadParams): 
 }
 
 export function useDesktopDownloads() {
+  ensureProgressListener()
+
   return {
     downloadingPaths,
     desktopDownloadList,
