@@ -6,8 +6,21 @@ export interface DesktopProxyConfig {
   url: string
 }
 
+export interface DesktopDownloadConfig {
+  downloadDir: string
+  maxConcurrentDownloads: number
+  threadsPerDownload: number
+}
+
 export interface DesktopClientConfig {
   proxy: DesktopProxyConfig
+  download: DesktopDownloadConfig
+}
+
+export const DEFAULT_DOWNLOAD_CONFIG: DesktopDownloadConfig = {
+  downloadDir: '',
+  maxConcurrentDownloads: 3,
+  threadsPerDownload: 4,
 }
 
 export interface DesktopTransferResult {
@@ -45,6 +58,7 @@ const DEFAULT_DESKTOP_CLIENT_CONFIG: DesktopClientConfig = {
     enabled: false,
     url: '',
   },
+  download: { ...DEFAULT_DOWNLOAD_CONFIG },
 }
 
 function getTauriInvoke() {
@@ -65,6 +79,14 @@ async function invokeDesktopCommand<T>(
 
 export async function getDesktopClientConfig(): Promise<DesktopClientConfig> {
   return invokeDesktopCommand<DesktopClientConfig>('get_desktop_client_config')
+}
+
+export async function getDefaultDesktopDownloadDir(): Promise<string> {
+  return invokeDesktopCommand<string>('get_default_desktop_download_dir')
+}
+
+export async function pickDesktopDownloadDir(currentDir?: string): Promise<string | null> {
+  return invokeDesktopCommand<string | null>('pick_desktop_download_dir', { currentDir })
 }
 
 export async function saveDesktopClientConfig(config: DesktopClientConfig): Promise<void> {

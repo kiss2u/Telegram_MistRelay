@@ -121,6 +121,7 @@
             <div class="desktop-downloads-title">本地下载任务</div>
             <div class="desktop-downloads-subtitle">文件会保存到 Windows 下载目录下的 `MistRelay` 文件夹。</div>
           </div>
+          <el-button text type="primary" @click="router.push('/local-downloads')">查看全部</el-button>
         </div>
         <div class="desktop-downloads-list">
           <div
@@ -455,20 +456,31 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { HomeFilled, Document, Folder, Search, List, Grid, Picture, VideoPlay, Sort, Download, Delete, RefreshRight } from '@element-plus/icons-vue'
 import { getRcloneRemotes, browseDrive, getThumbnail, deleteFile, getDriveUsage, type RcloneRemote, type DriveItem, type DriveUsageResponse } from '@/api'
 import VideoPlayer from '@/components/VideoPlayer.vue'
 import {
-  startDesktopDownload,
   getDesktopTransferStatus,
   prepareDesktopPreviewFile,
   startDesktopPreviewStream,
   toDesktopAssetUrl,
-  type DesktopDownloadSession,
   type DesktopTransferStatus,
 } from '@/utils/desktop'
+import { useDesktopDownloads } from '@/composables/useDesktopDownloads'
 import { buildAuthorizedApiUrl } from '@/utils/runtime'
+
+const router = useRouter()
+const {
+  downloadingPaths,
+  desktopDownloadList,
+  getDesktopDownloadLabel,
+  getDesktopDownloadTagType,
+  getDesktopDownloadProgressStatus,
+  formatDesktopDownloadMeta,
+  startTrackedDesktopDownload,
+} = useDesktopDownloads()
 
 interface RemoteUsageState {
   response?: DriveUsageResponse
@@ -935,78 +947,6 @@ function handleRemoteChange() {
   browse()
 }
 
-function getDesktopDownloadLabel(task: DesktopTransferStatus): string {
-  if (task.state === 'completed') return '已完成'
-  if (task.state === 'error') return '失败'
-  if (task.state === 'pending') return '等待中'
-  return '下载中'
-}
-
-function getDesktopDownloadTagType(task: DesktopTransferStatus): 'success' | 'danger' | 'warning' | 'info' {
-  if (task.state === 'completed') return 'success'
-  if (task.state === 'error') return 'danger'
-  if (task.state === 'pending') return 'info'
-  return 'warning'
-}
-
-function getDesktopDownloadProgressStatus(task: DesktopTransferStatus): '' | 'success' | 'exception' | 'warning' {
-  if (task.state === 'completed') return 'success'
-  if (task.state === 'error') return 'exception'
-  return 'warning'
-}
-
-function formatDesktopDownloadMeta(task: DesktopTransferStatus): string {
-  const downloaded = formatBytes(task.downloadedBytes)
-  if (task.totalBytes && task.totalBytes > 0) {
-    return `${downloaded} / ${formatBytes(task.totalBytes)}`
-  }
-  return downloaded
-}
-
-async function monitorDesktopDownload(session: DesktopDownloadSession, itemPath: string) {
-  let successNotified = false
-
-  try {
-    while (true) {
-      const status = await getDesktopTransferStatus(session.transferId)
-      desktopDownloadStatuses.value = {
-        ...desktopDownloadStatuses.value,
-        [session.transferId]: status,
-      }
-
-      if (status.state === 'completed') {
-        downloadingPaths.value = {
-          ...downloadingPaths.value,
-          [itemPath]: false,
-        }
-        if (!successNotified) {
-          ElMessage.success(`已下载到本地: ${status.localPath}`)
-          successNotified = true
-        }
-        return
-      }
-
-      if (status.state === 'error') {
-        downloadingPaths.value = {
-          ...downloadingPaths.value,
-          [itemPath]: false,
-        }
-        ElMessage.error(status.error || '桌面端下载失败')
-        return
-      }
-
-      await sleep(350)
-    }
-  } catch (err: any) {
-    console.error('轮询桌面下载进度失败:', err)
-    downloadingPaths.value = {
-      ...downloadingPaths.value,
-      [itemPath]: false,
-    }
-    ElMessage.error(err.message || '轮询桌面下载进度失败')
-  }
-}
-
 // 下载文件
 async function handleDownload(item: DriveItem) {
   if (item.isDir) return
@@ -1017,46 +957,13 @@ async function handleDownload(item: DriveItem) {
     download: true,
   })
 
-  if (downloadingPaths.value[item.path]) {
-    return
-  }
-
-  downloadingPaths.value = {
-    ...downloadingPaths.value,
-    [item.path]: true
-  }
-
-  try {
-    const session = await startDesktopDownload({
-      sourceUrl: url,
-      remote: currentRemote.value,
-      remotePath: item.path,
-      fileName: item.name,
-    })
-
-    desktopDownloadStatuses.value = {
-      ...desktopDownloadStatuses.value,
-      [session.transferId]: {
-        transferId: session.transferId,
-        fileName: session.fileName,
-        localPath: session.localPath,
-        downloadedBytes: 0,
-        totalBytes: undefined,
-        progressPercent: 0,
-        state: 'pending',
-        readyForPreview: false,
-      },
-    }
-
-    void monitorDesktopDownload(session, item.path)
-  } catch (err: any) {
-    console.error('桌面端下载失败:', err)
-    ElMessage.error(err.message || '桌面端下载失败')
-    downloadingPaths.value = {
-      ...downloadingPaths.value,
-      [item.path]: false
-    }
-  }
+  await startTrackedDesktopDownload({
+    sourceUrl: url,
+    remote: currentRemote.value,
+    remotePath: item.path,
+    fileName: item.name,
+    pathKey: item.path,
+  })
 }
 
 // 删除文件
@@ -1097,23 +1004,8 @@ const previewItem = ref<DriveItem | null>(null)
 const previewType = ref<'image' | 'video' | 'unknown'>('unknown')
 const previewUrl = ref('')
 const previewLoading = ref(false)
-const downloadingPaths = ref<Record<string, boolean>>({})
-const desktopDownloadStatuses = ref<Record<string, DesktopTransferStatus>>({})
 const previewTransferStatus = ref<DesktopTransferStatus | null>(null)
 let previewRequestToken = 0
-
-const desktopDownloadList = computed(() => {
-  return Object.values(desktopDownloadStatuses.value)
-    .sort((a, b) => {
-      const stateScore = (value: DesktopTransferStatus['state']) => {
-        if (value === 'downloading' || value === 'pending') return 0
-        if (value === 'completed') return 1
-        return 2
-      }
-
-      return stateScore(a.state) - stateScore(b.state)
-    })
-})
 
 const previewProgressPercent = computed(() => {
   if (!previewTransferStatus.value) return 0

@@ -40,6 +40,11 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/drive.vue')
   },
   {
+    path: '/local-downloads',
+    name: 'LocalDownloads',
+    component: () => import('@/views/local-downloads.vue')
+  },
+  {
     path: '/system',
     name: 'System',
     component: () => import('@/views/system.vue')

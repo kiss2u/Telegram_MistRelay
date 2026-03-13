@@ -13,9 +13,9 @@ use std::{
     thread,
     time::Duration,
 };
-
-use reqwest::{blocking::Client, Proxy, StatusCode};
+use reqwest::{blocking::Client, header, Proxy, StatusCode};
 use serde::{Deserialize, Serialize};
+use tauri_plugin_dialog::{DialogExt, FilePath};
 use url::Url;
 
 const PREVIEW_READY_BYTES: u64 = 4 * 1024 * 1024;
@@ -27,10 +27,68 @@ struct DesktopProxyConfig {
     url: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct DesktopDownloadConfig {
+    download_dir: String,
+    max_concurrent_downloads: u32,
+    threads_per_download: u32,
+}
+
+impl Default for DesktopDownloadConfig {
+    fn default() -> Self {
+        Self {
+            download_dir: String::new(),
+            max_concurrent_downloads: 3,
+            threads_per_download: 4,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 struct DesktopClientConfig {
     proxy: DesktopProxyConfig,
+    download: DesktopDownloadConfig,
+}
+
+struct ConcurrencyLimiter {
+    active: Mutex<usize>,
+    max: Mutex<usize>,
+    condvar: Condvar,
+}
+
+impl ConcurrencyLimiter {
+    fn new(max: usize) -> Self {
+        Self {
+            active: Mutex::new(0),
+            max: Mutex::new(max.max(1)),
+            condvar: Condvar::new(),
+        }
+    }
+
+    fn acquire(&self) {
+        let mut active = self.active.lock().unwrap();
+        loop {
+            let max = *self.max.lock().unwrap();
+            if *active < max {
+                *active += 1;
+                return;
+            }
+            active = self.condvar.wait(active).unwrap();
+        }
+    }
+
+    fn release(&self) {
+        let mut active = self.active.lock().unwrap();
+        *active = active.saturating_sub(1);
+        self.condvar.notify_one();
+    }
+
+    fn update_max(&self, new_max: usize) {
+        *self.max.lock().unwrap() = new_max.max(1);
+        self.condvar.notify_all();
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -129,6 +187,8 @@ struct DesktopRuntimeState {
     download_transfers: Arc<Mutex<HashMap<String, Arc<TransferHandle>>>>,
     download_sessions: Arc<Mutex<HashMap<String, Arc<TransferHandle>>>>,
     next_transfer_id: AtomicU64,
+    download_limiter: Arc<ConcurrencyLimiter>,
+    threads_per_download: Arc<Mutex<u32>>,
 }
 
 impl DesktopRuntimeState {
@@ -146,6 +206,8 @@ impl DesktopRuntimeState {
 
         spawn_preview_server(listener, Arc::clone(&preview_sessions));
 
+        let config = load_desktop_client_config().unwrap_or_default();
+
         Ok(Self {
             preview_server_port: port,
             preview_transfers,
@@ -153,6 +215,10 @@ impl DesktopRuntimeState {
             download_transfers,
             download_sessions,
             next_transfer_id: AtomicU64::new(1),
+            download_limiter: Arc::new(ConcurrencyLimiter::new(
+                config.download.max_concurrent_downloads as usize,
+            )),
+            threads_per_download: Arc::new(Mutex::new(config.download.threads_per_download)),
         })
     }
 }
@@ -269,10 +335,39 @@ fn build_relative_file_path(remote: &str, remote_path: &str, file_name: &str) ->
     relative
 }
 
-fn downloads_root_dir() -> Result<PathBuf, String> {
+fn default_downloads_root_dir() -> Result<PathBuf, String> {
     let download_dir =
         dirs::download_dir().ok_or_else(|| "无法定位系统下载目录".to_string())?;
     Ok(download_dir.join("MistRelay"))
+}
+
+fn normalized_download_dir(raw: &str) -> Result<String, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(String::new());
+    }
+
+    let path = PathBuf::from(trimmed);
+    if !path.is_absolute() {
+        return Err("下载目录必须是绝对路径".to_string());
+    }
+
+    fs::create_dir_all(&path).map_err(|error| format!("创建下载目录失败: {error}"))?;
+    let metadata = fs::metadata(&path).map_err(|error| format!("读取下载目录失败: {error}"))?;
+    if !metadata.is_dir() {
+        return Err("下载目录必须是文件夹".to_string());
+    }
+
+    Ok(path.to_string_lossy().to_string())
+}
+
+fn downloads_root_dir() -> Result<PathBuf, String> {
+    let config = load_desktop_client_config()?;
+    if config.download.download_dir.trim().is_empty() {
+        return default_downloads_root_dir();
+    }
+
+    Ok(PathBuf::from(&config.download.download_dir))
 }
 
 fn preview_cache_root_dir() -> Result<PathBuf, String> {
@@ -330,14 +425,33 @@ fn mark_transfer_failed(handle: &TransferHandle, message: String) {
     }
 }
 
-fn spawn_transfer(handle: Arc<TransferHandle>) {
+fn spawn_transfer(
+    handle: Arc<TransferHandle>,
+    limiter: Option<Arc<ConcurrencyLimiter>>,
+    threads: u32,
+) {
     if handle.worker_started.swap(true, Ordering::SeqCst) {
         return;
     }
 
     thread::spawn(move || {
-        if let Err(error) = stream_transfer_to_path(&handle) {
+        if let Some(ref limiter) = limiter {
+            limiter.acquire();
+        }
+
+        let result = match handle.kind {
+            TransferKind::Download if threads > 1 => {
+                multi_thread_download(&handle, threads)
+            }
+            _ => stream_transfer_to_path(&handle),
+        };
+
+        if let Err(error) = result {
             mark_transfer_failed(&handle, error);
+        }
+
+        if let Some(limiter) = limiter {
+            limiter.release();
         }
     });
 }
@@ -432,6 +546,148 @@ fn stream_transfer_to_path(handle: &TransferHandle) -> Result<(), String> {
     progress.complete = true;
     progress.ready_for_preview = matches!(handle.kind, TransferKind::Preview);
     condvar.notify_all();
+
+    Ok(())
+}
+
+fn multi_thread_download(handle: &TransferHandle, num_threads: u32) -> Result<(), String> {
+    ensure_parent_dir(&handle.local_path)?;
+
+    let client = build_http_client()?;
+    let head_resp = client
+        .head(&handle.source_url)
+        .send()
+        .map_err(|e| format!("HEAD 请求失败: {e}"))?;
+
+    let accepts_ranges = head_resp
+        .headers()
+        .get(header::ACCEPT_RANGES)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.eq_ignore_ascii_case("bytes"))
+        .unwrap_or(false);
+    let total_size = head_resp.content_length();
+
+    if !accepts_ranges || total_size.is_none() || num_threads <= 1 {
+        return stream_transfer_to_path(handle);
+    }
+
+    let total = total_size.unwrap();
+    if total == 0 {
+        return stream_transfer_to_path(handle);
+    }
+
+    {
+        let (lock, condvar) = &*handle.inner;
+        let mut progress = lock.lock().map_err(|_| "状态已损坏".to_string())?;
+        progress.total_bytes = Some(total);
+        condvar.notify_all();
+    }
+
+    let file = fs::File::create(&handle.local_path)
+        .map_err(|e| format!("创建文件失败: {e}"))?;
+    file.set_len(total)
+        .map_err(|e| format!("预分配文件空间失败: {e}"))?;
+    drop(file);
+
+    let chunk_size = total / num_threads as u64;
+    let shared_downloaded = Arc::new(AtomicU64::new(0));
+    let shared_error: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+
+    let mut thread_handles = Vec::with_capacity(num_threads as usize);
+
+    for i in 0..num_threads {
+        let start = i as u64 * chunk_size;
+        let end = if i == num_threads - 1 {
+            total - 1
+        } else {
+            (i + 1) as u64 * chunk_size - 1
+        };
+
+        let url = handle.source_url.clone();
+        let path = handle.local_path.clone();
+        let downloaded = Arc::clone(&shared_downloaded);
+        let error = Arc::clone(&shared_error);
+        let progress_inner = Arc::clone(&handle.inner);
+
+        thread_handles.push(thread::spawn(move || {
+            if let Err(e) = download_chunk(&url, &path, start, end, &downloaded, &progress_inner) {
+                let mut err_lock = error.lock().unwrap();
+                if err_lock.is_none() {
+                    *err_lock = Some(e);
+                }
+            }
+        }));
+    }
+
+    for th in thread_handles {
+        let _ = th.join();
+    }
+
+    if let Some(error) = shared_error.lock().unwrap().take() {
+        let _ = fs::remove_file(&handle.local_path);
+        return Err(error);
+    }
+
+    let (lock, condvar) = &*handle.inner;
+    let mut progress = lock.lock().map_err(|_| "状态已损坏".to_string())?;
+    progress.downloaded_bytes = total;
+    progress.total_bytes = Some(total);
+    progress.complete = true;
+    condvar.notify_all();
+
+    Ok(())
+}
+
+fn download_chunk(
+    url: &str,
+    path: &Path,
+    start: u64,
+    end: u64,
+    shared_downloaded: &AtomicU64,
+    progress_inner: &Arc<(Mutex<TransferProgress>, Condvar)>,
+) -> Result<(), String> {
+    let client = build_http_client()?;
+    let range = format!("bytes={}-{}", start, end);
+
+    let mut response = client
+        .get(url)
+        .header(header::RANGE, &range)
+        .send()
+        .map_err(|e| format!("分片下载失败: {e}"))?;
+
+    let status = response.status();
+    if status != StatusCode::PARTIAL_CONTENT && status != StatusCode::OK {
+        return Err(format!("分片下载失败: 服务返回 {status}"));
+    }
+
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .map_err(|e| format!("打开文件失败: {e}"))?;
+    file.seek(SeekFrom::Start(start))
+        .map_err(|e| format!("定位文件失败: {e}"))?;
+
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = response
+            .read(&mut buffer)
+            .map_err(|e| format!("读取分片数据失败: {e}"))?;
+        if read == 0 {
+            break;
+        }
+
+        file.write_all(&buffer[..read])
+            .map_err(|e| format!("写入分片数据失败: {e}"))?;
+
+        let total_downloaded =
+            shared_downloaded.fetch_add(read as u64, Ordering::Relaxed) + read as u64;
+
+        let (lock, condvar) = &**progress_inner;
+        if let Ok(mut progress) = lock.lock() {
+            progress.downloaded_bytes = total_downloaded;
+            condvar.notify_all();
+        }
+    }
 
     Ok(())
 }
@@ -756,17 +1012,69 @@ fn get_desktop_client_config() -> Result<DesktopClientConfig, String> {
 }
 
 #[tauri::command]
-fn save_desktop_client_config(config: DesktopClientConfig) -> Result<(), String> {
+fn get_default_desktop_download_dir() -> Result<String, String> {
+    Ok(default_downloads_root_dir()?.to_string_lossy().to_string())
+}
+
+fn dialog_file_path_to_string(path: FilePath) -> Option<String> {
+    match path {
+        FilePath::Path(path) => Some(path.to_string_lossy().to_string()),
+        _ => None,
+    }
+}
+
+#[tauri::command]
+async fn pick_desktop_download_dir(
+    app: tauri::AppHandle,
+    current_dir: Option<String>,
+) -> Result<Option<String>, String> {
+    let mut dialog = app.dialog().file();
+
+    let initial_dir = current_dir
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .filter(|path| path.exists() && path.is_dir())
+        .or_else(|| default_downloads_root_dir().ok());
+
+    if let Some(initial_dir) = initial_dir {
+        dialog = dialog.set_directory(initial_dir);
+    }
+
+    Ok(dialog.blocking_pick_folder().and_then(dialog_file_path_to_string))
+}
+
+#[tauri::command]
+fn save_desktop_client_config(
+    state: tauri::State<'_, DesktopRuntimeState>,
+    config: DesktopClientConfig,
+) -> Result<(), String> {
     let proxy_url = config.proxy.url.trim().to_string();
+    let download_dir = normalized_download_dir(&config.download.download_dir)?;
     let normalized_config = DesktopClientConfig {
         proxy: DesktopProxyConfig {
             enabled: config.proxy.enabled,
             url: proxy_url,
         },
+        download: DesktopDownloadConfig {
+            download_dir,
+            max_concurrent_downloads: config.download.max_concurrent_downloads.max(1),
+            threads_per_download: config.download.threads_per_download.clamp(1, 32),
+        },
     };
 
     let _ = normalized_proxy_url(&normalized_config)?;
-    save_desktop_client_config_file(&normalized_config)
+    save_desktop_client_config_file(&normalized_config)?;
+
+    state
+        .download_limiter
+        .update_max(normalized_config.download.max_concurrent_downloads as usize);
+    if let Ok(mut threads) = state.threads_per_download.lock() {
+        *threads = normalized_config.download.threads_per_download;
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -805,7 +1113,16 @@ fn desktop_start_download(
         }
     };
 
-    spawn_transfer(Arc::clone(&handle));
+    let threads = *state
+        .threads_per_download
+        .lock()
+        .map_err(|_| "读取线程配置失败".to_string())?;
+
+    spawn_transfer(
+        Arc::clone(&handle),
+        Some(Arc::clone(&state.download_limiter)),
+        threads,
+    );
 
     let transfer_id = format!(
         "{}-{}",
@@ -905,7 +1222,7 @@ fn desktop_start_preview_stream(
         }
     };
 
-    spawn_transfer(Arc::clone(&handle));
+    spawn_transfer(Arc::clone(&handle), None, 1);
 
     let transfer_id = format!(
         "{}-{}",
@@ -970,11 +1287,14 @@ fn main() {
     }
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .manage(runtime_state)
         .invoke_handler(tauri::generate_handler![
             get_desktop_client_config,
+            get_default_desktop_download_dir,
+            pick_desktop_download_dir,
             save_desktop_client_config,
             restart_desktop_app,
             desktop_start_download,
