@@ -267,6 +267,30 @@ fn normalized_proxy_url(config: &DesktopClientConfig) -> Result<Option<Url>, Str
     validate_proxy_url(proxy_url).map(Some)
 }
 
+fn apply_process_proxy_env(config: &DesktopClientConfig) -> Result<(), String> {
+    const PROXY_ENV_KEYS: [&str; 6] = [
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+    ];
+
+    if let Some(proxy_url) = normalized_proxy_url(config)? {
+        let proxy = proxy_url.to_string();
+        for key in PROXY_ENV_KEYS {
+            std::env::set_var(key, &proxy);
+        }
+    } else {
+        for key in PROXY_ENV_KEYS {
+            std::env::remove_var(key);
+        }
+    }
+
+    Ok(())
+}
+
 fn save_desktop_client_config_file(config: &DesktopClientConfig) -> Result<(), String> {
     let path = desktop_client_config_path()?;
     let Some(parent) = path.parent() else {
@@ -1066,6 +1090,7 @@ fn save_desktop_client_config(
 
     let _ = normalized_proxy_url(&normalized_config)?;
     save_desktop_client_config_file(&normalized_config)?;
+    apply_process_proxy_env(&normalized_config)?;
 
     state
         .download_limiter
@@ -1281,6 +1306,17 @@ fn main() {
     let mut context = tauri::generate_context!();
     let runtime_state = DesktopRuntimeState::new()
         .expect("failed to start local desktop preview runtime");
+
+    match load_desktop_client_config() {
+        Ok(config) => {
+            if let Err(error) = apply_process_proxy_env(&config) {
+                eprintln!("failed to apply process proxy config: {error}");
+            }
+        }
+        Err(error) => {
+            eprintln!("failed to load desktop client config: {error}");
+        }
+    }
 
     if let Err(error) = apply_saved_proxy(&mut context) {
         eprintln!("failed to apply desktop proxy config: {error}");

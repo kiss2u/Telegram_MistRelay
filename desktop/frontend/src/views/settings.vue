@@ -32,6 +32,16 @@
         :closable="false"
       />
 
+      <el-card shadow="hover">
+        <div class="card-header">
+          <div>
+            <div class="section-shortcut__title">本地下载设置已独立</div>
+            <div class="section-shortcut__desc">下载目录、下载并发和线程数已移到“本地下载”页面统一管理，避免和设置中心重复。</div>
+          </div>
+          <el-button type="primary" @click="router.push('/local-downloads')">打开本地下载</el-button>
+        </div>
+      </el-card>
+
       <el-tabs v-model="activeClientTab" type="border-card">
         <el-tab-pane label="连接" name="connection">
           <el-card shadow="hover">
@@ -131,78 +141,6 @@
           </el-card>
         </el-tab-pane>
 
-        <el-tab-pane label="下载" name="download">
-          <el-card shadow="hover">
-            <template #header>
-              <div class="card-header">
-                <span>本地下载控制</span>
-                <div class="card-actions">
-                  <el-button @click="loadDesktopDownloadConfig" :loading="loadingDesktopDownloadConfig">
-                    重新读取
-                  </el-button>
-                  <el-button type="primary" @click="saveDesktopDownloadConfig" :loading="savingDesktopDownloadConfig">
-                    保存配置
-                  </el-button>
-                </div>
-              </div>
-            </template>
-
-            <el-alert
-              title="以下配置控制桌面客户端从服务器下载文件到本地时的保存目录、并发和多线程行为，与服务端无关。保存后立即生效，无需重启。"
-              type="info"
-              :closable="false"
-              style="margin-bottom: 20px"
-            />
-
-            <el-form label-width="180px">
-              <el-form-item label="最大并行下载数">
-                <el-input-number
-                  v-model="desktopMaxConcurrent"
-                  :min="1"
-                  :max="10"
-                  :step="1"
-                />
-                <div class="el-form-item__help">
-                  同时下载文件的最大数量，超出的任务会排队等待。默认 3。
-                </div>
-              </el-form-item>
-              <el-form-item label="下载目录">
-                <div class="download-dir-row">
-                  <el-input
-                    v-model="desktopDownloadDir"
-                    placeholder="留空则使用系统下载目录下的 MistRelay 文件夹"
-                    clearable
-                  />
-                  <el-button @click="handlePickDesktopDownloadDir">选择文件夹</el-button>
-                </div>
-                <div class="el-form-item__help">
-                  请输入绝对路径。留空时自动使用默认目录。
-                </div>
-              </el-form-item>
-              <el-form-item label="当前生效目录">
-                <el-input :model-value="effectiveDesktopDownloadDir" readonly />
-                <div class="el-form-item__help">
-                  默认目录：{{ defaultDesktopDownloadDir || '读取中...' }}
-                </div>
-              </el-form-item>
-              <el-form-item label="每文件下载线程数">
-                <el-input-number
-                  v-model="desktopThreadsPerDownload"
-                  :min="1"
-                  :max="32"
-                  :step="1"
-                />
-                <div class="el-form-item__help">
-                  单个文件使用多少个线程并行下载（分片），类似 IDM 多连接。服务器需支持 Range 请求，否则自动回退到单线程。默认 4。
-                </div>
-              </el-form-item>
-              <el-form-item>
-                <el-button @click="desktopDownloadDir = ''">恢复默认目录</el-button>
-              </el-form-item>
-            </el-form>
-          </el-card>
-        </el-tab-pane>
-
         <el-tab-pane label="代理" name="proxy">
           <el-card shadow="hover">
             <template #header>
@@ -223,7 +161,7 @@
             </template>
 
             <el-alert
-              title="桌面代理只影响本地客户端访问服务器的流量，不影响服务器端下载、上传和任务执行。保存后需要重启客户端。"
+              title="桌面代理会作为 PC 客户端的全局代理，覆盖页面请求、接口访问、更新检查、桌面下载和本地预览等客户端侧流量，不影响服务器端任务执行。保存后需要重启客户端。"
               type="warning"
               :closable="false"
               style="margin-bottom: 20px"
@@ -241,7 +179,7 @@
                   clearable
                 />
                 <div class="el-form-item__help">
-                  支持 `http://` 和 `socks5://`，如需认证可写成 `http://user:pass@host:port`。
+                  支持 `http://` 和 `socks5://`，如需认证可写成 `http://user:pass@host:port`。启用后，PC 客户端所有网络流量都会走这个代理。
                 </div>
               </el-form-item>
               <el-form-item label="代理状态">
@@ -636,7 +574,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { getConfig, updateConfig, reloadConfig, getRcloneConfig, saveRcloneConfig, getRcloneRemotes, type RcloneRemote } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { checkServerConnection } from '@/utils/connection'
-import { getDefaultDesktopDownloadDir, getDesktopClientConfig, isValidDesktopProxyUrl, pickDesktopDownloadDir, restartDesktopApp, saveDesktopClientConfig, checkForUpdate, downloadAndInstallUpdate, DEFAULT_DOWNLOAD_CONFIG, type UpdateProgress } from '@/utils/desktop'
+import { getDesktopClientConfig, isValidDesktopProxyUrl, restartDesktopApp, saveDesktopClientConfig, checkForUpdate, downloadAndInstallUpdate, type UpdateProgress } from '@/utils/desktop'
 import type { Update } from '@tauri-apps/plugin-updater'
 import { getServerBaseUrl, isValidServerBaseUrl, setServerBaseUrl } from '@/utils/runtime'
 import { useRouter } from 'vue-router'
@@ -660,13 +598,6 @@ const desktopProxyEnabled = ref(false)
 const desktopProxyUrl = ref('')
 const desktopProxyStatus = ref<'idle' | 'enabled' | 'disabled' | 'pending'>('idle')
 const desktopProxyStatusText = ref('')
-
-const loadingDesktopDownloadConfig = ref(false)
-const savingDesktopDownloadConfig = ref(false)
-const defaultDesktopDownloadDir = ref('')
-const desktopDownloadDir = ref(DEFAULT_DOWNLOAD_CONFIG.downloadDir)
-const desktopMaxConcurrent = ref(DEFAULT_DOWNLOAD_CONFIG.maxConcurrentDownloads)
-const desktopThreadsPerDownload = ref(DEFAULT_DOWNLOAD_CONFIG.threadsPerDownload)
 
 const appVersion = __APP_VERSION__
 const checkingUpdate = ref(false)
@@ -739,10 +670,6 @@ const desktopProxyStatusTagType = computed(() => {
   if (desktopProxyStatus.value === 'enabled') return 'success'
   if (desktopProxyStatus.value === 'pending') return 'warning'
   return 'info'
-})
-const effectiveDesktopDownloadDir = computed(() => {
-  const configured = desktopDownloadDir.value.trim()
-  return configured || defaultDesktopDownloadDir.value || '读取中...'
 })
 
 const configs = ref({
@@ -897,62 +824,6 @@ async function saveClientConnection() {
   }
 }
 
-async function loadDesktopDownloadConfig(showMessage = false) {
-  loadingDesktopDownloadConfig.value = true
-  try {
-    const [config, defaultDir] = await Promise.all([
-      getDesktopClientConfig(),
-      getDefaultDesktopDownloadDir(),
-    ])
-    const dl = config.download ?? DEFAULT_DOWNLOAD_CONFIG
-    defaultDesktopDownloadDir.value = defaultDir
-    desktopDownloadDir.value = dl.downloadDir ?? ''
-    desktopMaxConcurrent.value = dl.maxConcurrentDownloads
-    desktopThreadsPerDownload.value = dl.threadsPerDownload
-    if (showMessage) {
-      ElMessage.success('下载配置已读取')
-    }
-  } catch (err: any) {
-    console.error('加载下载配置失败:', err)
-    ElMessage.error(err.message || '加载下载配置失败')
-  } finally {
-    loadingDesktopDownloadConfig.value = false
-  }
-}
-
-async function saveDesktopDownloadConfig() {
-  savingDesktopDownloadConfig.value = true
-  try {
-    const current = await getDesktopClientConfig()
-    await saveDesktopClientConfig({
-      ...current,
-      download: {
-        downloadDir: desktopDownloadDir.value.trim(),
-        maxConcurrentDownloads: desktopMaxConcurrent.value,
-        threadsPerDownload: desktopThreadsPerDownload.value,
-      },
-    })
-    ElMessage.success('下载配置已保存并立即生效')
-  } catch (err: any) {
-    console.error('保存下载配置失败:', err)
-    ElMessage.error(err.message || '保存下载配置失败')
-  } finally {
-    savingDesktopDownloadConfig.value = false
-  }
-}
-
-async function handlePickDesktopDownloadDir() {
-  try {
-    const selected = await pickDesktopDownloadDir(desktopDownloadDir.value || defaultDesktopDownloadDir.value)
-    if (selected) {
-      desktopDownloadDir.value = selected
-    }
-  } catch (err: any) {
-    console.error('选择下载目录失败:', err)
-    ElMessage.error(err.message || '选择下载目录失败')
-  }
-}
-
 async function loadDesktopProxyConfig(showMessage = false) {
   loadingDesktopProxyConfig.value = true
   try {
@@ -961,8 +832,8 @@ async function loadDesktopProxyConfig(showMessage = false) {
     desktopProxyUrl.value = config.proxy.url
     desktopProxyStatus.value = config.proxy.enabled ? 'enabled' : 'disabled'
     desktopProxyStatusText.value = config.proxy.enabled
-      ? `当前将在客户端启动时通过 ${config.proxy.url} 访问服务器`
-      : '当前客户端启动时不使用代理'
+      ? `当前客户端重启后会通过 ${config.proxy.url} 走全局代理`
+      : '当前客户端处于直连模式，不使用全局代理'
 
     if (showMessage) {
       ElMessage.success('桌面代理配置已读取')
@@ -1004,10 +875,10 @@ async function saveDesktopProxyConfig() {
     desktopProxyUrl.value = proxyUrl
     desktopProxyStatus.value = 'pending'
     desktopProxyStatusText.value = desktopProxyEnabled.value
-      ? '代理配置已保存，重启客户端后将通过该代理访问服务器'
-      : '代理关闭已保存，重启客户端后将恢复直连服务器'
+      ? '全局代理配置已保存，重启客户端后所有网络流量都会切到该代理'
+      : '全局代理关闭已保存，重启客户端后会恢复直连模式'
 
-    ElMessage.success('桌面代理配置已保存，重启客户端后生效')
+    ElMessage.success('桌面全局代理配置已保存，重启客户端后生效')
   } catch (err: any) {
     console.error('保存桌面代理配置失败:', err)
     ElMessage.error(err.message || '保存桌面代理配置失败')
@@ -1283,7 +1154,6 @@ onMounted(() => {
   fetchConfigs()
   void testConnection(false)
   void loadDesktopProxyConfig()
-  void loadDesktopDownloadConfig()
   loadRcloneConfigFile()
   loadRcloneRemotes()
 })
@@ -1354,12 +1224,12 @@ onMounted(() => {
   @apply flex items-center gap-3 flex-wrap;
 }
 
-.download-dir-row {
-  @apply flex w-full gap-3;
+.section-shortcut__title {
+  @apply text-base font-semibold text-slate-900;
 }
 
-.download-dir-row :deep(.el-input) {
-  @apply flex-1;
+.section-shortcut__desc {
+  @apply mt-1 text-sm text-slate-600;
 }
 
 .connection-status {

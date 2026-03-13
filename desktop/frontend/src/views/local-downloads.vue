@@ -1,149 +1,178 @@
 <template>
   <div class="local-downloads-page">
-    <el-card shadow="hover" class="config-card">
+    <el-card shadow="hover" class="local-downloads-shell">
       <template #header>
         <div class="page-header">
           <div>
             <h2>本地下载管理</h2>
-            <p class="page-subtitle">这里直接管理桌面客户端下载目录、并发数和线程数，并查看当前下载任务。</p>
+            <p class="page-subtitle">配置和任务分开显示。这里管理桌面端本地下载目录、并发和线程，并单独查看下载任务。</p>
           </div>
           <div class="page-actions">
-            <el-button @click="loadDownloadConfig" :loading="loadingConfig">重新读取</el-button>
-            <el-button type="primary" @click="saveDownloadConfig" :loading="savingConfig">保存配置</el-button>
             <el-button @click="router.push('/drive')">前往网盘下载</el-button>
           </div>
         </div>
       </template>
+      <el-tabs v-model="activeTab" class="local-tabs">
+        <el-tab-pane name="config">
+          <template #label>
+            <span class="tab-label">下载配置</span>
+          </template>
 
-      <el-alert
-        title="以下配置只影响当前桌面客户端，不会修改服务器端下载参数。保存后新建的本地下载任务立即按新配置执行。"
-        type="info"
-        :closable="false"
-        style="margin-bottom: 20px"
-      />
-
-      <el-form label-width="180px" class="config-form">
-        <el-form-item label="下载目录">
-          <div class="download-dir-row">
-            <el-input
-              v-model="desktopDownloadDir"
-              placeholder="留空则使用系统下载目录下的 MistRelay 文件夹"
-              clearable
+          <div class="config-panel">
+            <el-alert
+              title="以下配置只影响当前桌面客户端，不会修改服务器端下载参数。保存后新建的本地下载任务立即按新配置执行。"
+              type="info"
+              :closable="false"
+              style="margin-bottom: 20px"
             />
-            <el-button @click="handlePickDownloadDir">选择文件夹</el-button>
-          </div>
-          <div class="el-form-item__help">
-            请输入绝对路径。留空则自动恢复默认目录。
-          </div>
-        </el-form-item>
 
-        <el-form-item label="当前生效目录">
-          <el-input :model-value="effectiveDesktopDownloadDir" readonly />
-          <div class="el-form-item__help">
-            默认目录：{{ defaultDesktopDownloadDir || '读取中...' }}
-          </div>
-        </el-form-item>
-
-        <el-form-item label="最大并行下载数">
-          <el-input-number
-            v-model="desktopMaxConcurrent"
-            :min="1"
-            :max="10"
-            :step="1"
-          />
-          <div class="el-form-item__help">
-            同时下载多少个文件，超过的任务会排队等待。
-          </div>
-        </el-form-item>
-
-        <el-form-item label="每文件下载线程数">
-          <el-input-number
-            v-model="desktopThreadsPerDownload"
-            :min="1"
-            :max="32"
-            :step="1"
-          />
-          <div class="el-form-item__help">
-            单个文件用多少个线程并行分片下载。服务器不支持 Range 时会自动回退。
-          </div>
-        </el-form-item>
-
-        <el-form-item>
-          <el-button @click="desktopDownloadDir = ''">恢复默认目录</el-button>
-        </el-form-item>
-      </el-form>
-    </el-card>
-
-    <el-card shadow="hover">
-      <template #header>
-        <div class="section-header">
-          <div>
-            <div class="section-title">下载任务</div>
-            <p class="section-subtitle">已开始的任务会保留在当前列表中，方便查看保存位置和失败原因。</p>
-          </div>
-        </div>
-      </template>
-
-      <div class="stats-grid">
-        <div class="stat-card">
-          <div class="stat-label">总任务</div>
-          <div class="stat-value">{{ desktopDownloadStats.total }}</div>
-        </div>
-        <div class="stat-card is-active">
-          <div class="stat-label">进行中</div>
-          <div class="stat-value">{{ desktopDownloadStats.active }}</div>
-        </div>
-        <div class="stat-card is-success">
-          <div class="stat-label">已完成</div>
-          <div class="stat-value">{{ desktopDownloadStats.completed }}</div>
-        </div>
-        <div class="stat-card is-danger">
-          <div class="stat-label">失败</div>
-          <div class="stat-value">{{ desktopDownloadStats.failed }}</div>
-        </div>
-      </div>
-
-      <el-empty
-        v-if="desktopDownloadList.length === 0"
-        description="还没有本地下载任务，请到“我的网盘”里选择文件下载。"
-        :image-size="88"
-      />
-
-      <div v-else class="downloads-list">
-        <div
-          v-for="task in desktopDownloadList"
-          :key="task.transferId"
-          class="download-card"
-        >
-          <div class="download-card-head">
-            <div class="download-main">
-              <div class="download-name" :title="task.fileName">{{ task.fileName }}</div>
-              <div class="download-meta-line">{{ formatDesktopDownloadMeta(task) }}</div>
+            <div class="config-summary-grid">
+              <div class="summary-tile">
+                <div class="summary-label">当前生效目录</div>
+                <div class="summary-value is-path" :title="effectiveDesktopDownloadDir">{{ effectiveDesktopDownloadDir }}</div>
+              </div>
+              <div class="summary-tile">
+                <div class="summary-label">默认目录</div>
+                <div class="summary-value is-path" :title="defaultDesktopDownloadDir || '读取中...'">{{ defaultDesktopDownloadDir || '读取中...' }}</div>
+              </div>
+              <div class="summary-tile">
+                <div class="summary-label">下载并发</div>
+                <div class="summary-value">{{ desktopMaxConcurrent }}</div>
+              </div>
+              <div class="summary-tile">
+                <div class="summary-label">单文件线程</div>
+                <div class="summary-value">{{ desktopThreadsPerDownload }}</div>
+              </div>
             </div>
-            <el-tag :type="getDesktopDownloadTagType(task)" effect="plain">
-              {{ getDesktopDownloadLabel(task) }}
-            </el-tag>
+
+            <div class="config-toolbar">
+              <el-button @click="loadDownloadConfig" :loading="loadingConfig">重新读取</el-button>
+              <el-button type="primary" @click="saveDownloadConfig" :loading="savingConfig">保存配置</el-button>
+            </div>
+
+            <el-form label-width="180px" class="config-form">
+              <el-form-item label="下载目录">
+                <div class="download-dir-row">
+                  <el-input
+                    v-model="desktopDownloadDir"
+                    placeholder="留空则使用系统下载目录下的 MistRelay 文件夹"
+                    clearable
+                  />
+                  <el-button @click="handlePickDownloadDir">选择文件夹</el-button>
+                </div>
+                <div class="el-form-item__help">
+                  请输入绝对路径。留空则自动恢复默认目录。
+                </div>
+              </el-form-item>
+
+              <el-form-item label="最大并行下载数">
+                <el-input-number
+                  v-model="desktopMaxConcurrent"
+                  :min="1"
+                  :max="10"
+                  :step="1"
+                />
+                <div class="el-form-item__help">
+                  同时下载多少个文件，超过的任务会排队等待。
+                </div>
+              </el-form-item>
+
+              <el-form-item label="每文件下载线程数">
+                <el-input-number
+                  v-model="desktopThreadsPerDownload"
+                  :min="1"
+                  :max="32"
+                  :step="1"
+                />
+                <div class="el-form-item__help">
+                  单个文件用多少个线程并行分片下载。服务器不支持 Range 时会自动回退。
+                </div>
+              </el-form-item>
+
+              <el-form-item>
+                <el-button @click="desktopDownloadDir = ''">恢复默认目录</el-button>
+              </el-form-item>
+            </el-form>
+          </div>
+        </el-tab-pane>
+
+        <el-tab-pane name="tasks">
+          <template #label>
+            <span class="tab-label">
+              下载任务
+              <el-tag size="small" type="info" effect="plain">{{ desktopDownloadStats.total }}</el-tag>
+            </span>
+          </template>
+
+          <div class="section-header">
+            <div>
+              <div class="section-title">下载任务</div>
+              <p class="section-subtitle">已开始的任务会保留在当前列表中，方便查看保存位置和失败原因。</p>
+            </div>
           </div>
 
-          <el-progress
-            :percentage="task.progressPercent"
-            :status="getDesktopDownloadProgressStatus(task)"
-            :indeterminate="!task.totalBytes && task.state !== 'completed' && task.state !== 'error'"
-            :duration="2"
-            :stroke-width="10"
+          <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-label">总任务</div>
+              <div class="stat-value">{{ desktopDownloadStats.total }}</div>
+            </div>
+            <div class="stat-card is-active">
+              <div class="stat-label">进行中</div>
+              <div class="stat-value">{{ desktopDownloadStats.active }}</div>
+            </div>
+            <div class="stat-card is-success">
+              <div class="stat-label">已完成</div>
+              <div class="stat-value">{{ desktopDownloadStats.completed }}</div>
+            </div>
+            <div class="stat-card is-danger">
+              <div class="stat-label">失败</div>
+              <div class="stat-value">{{ desktopDownloadStats.failed }}</div>
+            </div>
+          </div>
+
+          <el-empty
+            v-if="desktopDownloadList.length === 0"
+            description="还没有本地下载任务，请到“我的网盘”里选择文件下载。"
+            :image-size="88"
           />
 
-          <div class="download-detail-row">
-            <span class="detail-label">保存位置</span>
-            <span class="detail-value" :title="task.localPath">{{ task.localPath }}</span>
-          </div>
+          <div v-else class="downloads-list">
+            <div
+              v-for="task in desktopDownloadList"
+              :key="task.transferId"
+              class="download-card"
+            >
+              <div class="download-card-head">
+                <div class="download-main">
+                  <div class="download-name" :title="task.fileName">{{ task.fileName }}</div>
+                  <div class="download-meta-line">{{ formatDesktopDownloadMeta(task) }}</div>
+                </div>
+                <el-tag :type="getDesktopDownloadTagType(task)" effect="plain">
+                  {{ getDesktopDownloadLabel(task) }}
+                </el-tag>
+              </div>
 
-          <div v-if="task.error" class="download-detail-row is-error">
-            <span class="detail-label">错误信息</span>
-            <span class="detail-value">{{ task.error }}</span>
+              <el-progress
+                :percentage="task.progressPercent"
+                :status="getDesktopDownloadProgressStatus(task)"
+                :indeterminate="!task.totalBytes && task.state !== 'completed' && task.state !== 'error'"
+                :duration="2"
+                :stroke-width="10"
+              />
+
+              <div class="download-detail-row">
+                <span class="detail-label">保存位置</span>
+                <span class="detail-value" :title="task.localPath">{{ task.localPath }}</span>
+              </div>
+
+              <div v-if="task.error" class="download-detail-row is-error">
+                <span class="detail-label">错误信息</span>
+                <span class="detail-value">{{ task.error }}</span>
+              </div>
+            </div>
           </div>
-        </div>
-      </div>
+        </el-tab-pane>
+      </el-tabs>
     </el-card>
   </div>
 </template>
@@ -156,6 +185,7 @@ import { DEFAULT_DOWNLOAD_CONFIG, getDefaultDesktopDownloadDir, getDesktopClient
 import { useDesktopDownloads } from '@/composables/useDesktopDownloads'
 
 const router = useRouter()
+const activeTab = ref<'config' | 'tasks'>('config')
 const loadingConfig = ref(false)
 const savingConfig = ref(false)
 const defaultDesktopDownloadDir = ref('')
@@ -241,8 +271,35 @@ onMounted(() => {
 <style scoped>
 .local-downloads-page {
   padding: 20px;
-  display: grid;
-  gap: 20px;
+}
+
+.local-downloads-shell :deep(.el-card__body) {
+  padding-top: 14px;
+}
+
+.local-tabs :deep(.el-tabs__header) {
+  margin-bottom: 20px;
+}
+
+.local-tabs :deep(.el-tabs__nav-wrap::after) {
+  height: 1px;
+  background: #e2e8f0;
+}
+
+.local-tabs :deep(.el-tabs__item) {
+  height: 42px;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.local-tabs :deep(.el-tabs__item.is-active) {
+  color: #2563eb;
+}
+
+.tab-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .page-header {
@@ -274,8 +331,48 @@ onMounted(() => {
   gap: 10px;
 }
 
-.config-card :deep(.el-card__body) {
-  padding-top: 12px;
+.config-panel {
+  display: grid;
+  gap: 20px;
+}
+
+.config-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.summary-tile {
+  padding: 16px 18px;
+  border-radius: 16px;
+  border: 1px solid #dbeafe;
+  background: linear-gradient(135deg, #f8fbff 0%, #ffffff 100%);
+}
+
+.summary-label {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.summary-value {
+  margin-top: 8px;
+  font-size: 26px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.summary-value.is-path {
+  font-size: 13px;
+  line-height: 1.6;
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.config-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .config-form {
@@ -306,7 +403,7 @@ onMounted(() => {
 }
 
 .section-subtitle {
-  margin: 8px 0 0;
+  margin: 8px 0 20px;
   font-size: 13px;
   line-height: 1.6;
   color: #64748b;
