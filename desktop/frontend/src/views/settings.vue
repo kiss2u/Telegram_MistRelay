@@ -1,7 +1,6 @@
 <template>
   <div class="settings-page">
-    <div class="page-header">
-      <div class="page-title">设置中心</div>
+      <div class="scope-bar">
       <el-radio-group v-model="settingsScope" size="large" class="scope-switch">
         <el-radio-button label="client">客户端设置</el-radio-button>
         <el-radio-button label="server">服务端设置</el-radio-button>
@@ -9,27 +8,10 @@
     </div>
 
     <div v-if="settingsScope === 'client'" class="scope-panel">
-      <el-card shadow="never" class="client-overview">
-        <div class="client-overview__content">
-          <div class="client-overview__text">
-            <div class="client-overview__main">
-              仅当前客户端生效。这里只管理这台电脑上的连接地址、更新和代理，不会修改服务器配置。
-            </div>
-            <div class="client-overview__sub">
-              下载目录、下载并发和线程数已移到“本地下载”页面统一管理。
-            </div>
-          </div>
-          <el-button type="primary" @click="router.push('/local-downloads')">打开本地下载</el-button>
-        </div>
-      </el-card>
-
       <el-tabs v-model="activeClientTab" type="border-card">
         <el-tab-pane label="连接" name="connection">
           <el-card shadow="hover">
             <div class="panel-toolbar">
-              <div class="panel-toolbar__hint">
-                配置这台电脑连接的服务端地址，不会修改服务器本身的运行参数。
-              </div>
               <div class="card-actions">
                 <el-button @click="testConnection" :loading="testingConnection">
                   测试连接
@@ -71,9 +53,6 @@
         <el-tab-pane label="更新" name="update">
           <el-card shadow="hover">
             <div class="panel-toolbar">
-              <div class="panel-toolbar__hint">
-                这里只管理当前桌面客户端版本，不影响服务器升级和发布流程。
-              </div>
               <div class="card-actions">
                 <el-button @click="handleCheckUpdate" :loading="checkingUpdate" :disabled="installingUpdate">
                   检查更新
@@ -114,9 +93,6 @@
         <el-tab-pane label="代理" name="proxy">
           <el-card shadow="hover">
             <div class="panel-toolbar">
-              <div class="panel-toolbar__hint">
-                启用后，PC 客户端所有网络流量都会走代理；保存后需要重启客户端。
-              </div>
               <div class="card-actions">
                 <el-button @click="loadDesktopProxyConfig" :loading="loadingDesktopProxyConfig">
                   重新读取
@@ -158,31 +134,94 @@
             </el-form>
           </el-card>
         </el-tab-pane>
+
+        <el-tab-pane label="下载" name="download">
+          <el-card shadow="hover">
+            <div class="panel-toolbar">
+              <div class="card-actions">
+                <el-button @click="loadDownloadConfig" :loading="loadingDownloadConfig">重新读取</el-button>
+                <el-button type="primary" @click="saveDownloadConfig" :loading="savingDownloadConfig">保存配置</el-button>
+              </div>
+            </div>
+
+            <div class="download-summary-grid">
+              <div class="download-summary-tile">
+                <div class="download-summary-label">当前生效目录</div>
+                <div class="download-summary-value is-path" :title="effectiveDesktopDownloadDir">{{ effectiveDesktopDownloadDir }}</div>
+              </div>
+              <div class="download-summary-tile">
+                <div class="download-summary-label">默认目录</div>
+                <div class="download-summary-value is-path" :title="defaultDesktopDownloadDir || '读取中...'">{{ defaultDesktopDownloadDir || '读取中...' }}</div>
+              </div>
+              <div class="download-summary-tile">
+                <div class="download-summary-label">下载并发</div>
+                <div class="download-summary-value">{{ desktopMaxConcurrent }}</div>
+              </div>
+              <div class="download-summary-tile">
+                <div class="download-summary-label">单文件线程</div>
+                <div class="download-summary-value">{{ desktopThreadsPerDownload }}</div>
+              </div>
+            </div>
+
+            <el-form label-width="180px" style="margin-top: 20px; max-width: 860px;">
+              <el-form-item label="下载目录">
+                <div class="download-dir-row">
+                  <el-input
+                    v-model="desktopDownloadDir"
+                    placeholder="留空则使用系统下载目录下的 MistRelay 文件夹"
+                    clearable
+                  />
+                  <el-button @click="handlePickDownloadDir">选择文件夹</el-button>
+                </div>
+                <div class="el-form-item__help">
+                  请输入绝对路径。留空则自动恢复默认目录。
+                </div>
+              </el-form-item>
+
+              <el-form-item label="最大并行下载数">
+                <el-input-number
+                  v-model="desktopMaxConcurrent"
+                  :min="1"
+                  :max="10"
+                  :step="1"
+                />
+                <div class="el-form-item__help">
+                  同时下载多少个文件，超过的任务会排队等待。
+                </div>
+              </el-form-item>
+
+              <el-form-item label="每文件下载线程数">
+                <el-input-number
+                  v-model="desktopThreadsPerDownload"
+                  :min="1"
+                  :max="32"
+                  :step="1"
+                />
+                <div class="el-form-item__help">
+                  单个文件用多少个线程并行分片下载。服务器不支持 Range 时会自动回退。
+                </div>
+              </el-form-item>
+
+              <el-form-item>
+                <el-button @click="desktopDownloadDir = ''">恢复默认目录</el-button>
+              </el-form-item>
+            </el-form>
+          </el-card>
+        </el-tab-pane>
       </el-tabs>
     </div>
 
     <div v-else class="scope-panel">
-      <div class="section-toolbar">
-        <div class="section-toolbar__summary">
-          这里修改的是服务端配置，会影响所有客户端、下载任务、上传链路和直链服务。
-        </div>
-        <div class="section-toolbar__actions">
-          <el-button type="info" @click="handleReloadConfig" :loading="reloading" :disabled="reloading">
-            从 config.yml 重新导入
-          </el-button>
-          <div class="section-toolbar__hint">
-            配置保存后会自动从数据库读取，无需手动重载
-          </div>
-        </div>
+      <div class="server-actions">
+        <el-button type="info" @click="handleReloadConfig" :loading="reloading" :disabled="reloading">
+          从 config.yml 重新导入
+        </el-button>
       </div>
 
       <el-tabs v-model="activeServerTab" type="border-card">
         <el-tab-pane label="Telegram配置" name="telegram">
           <el-card shadow="hover">
             <div class="panel-toolbar">
-              <div class="panel-toolbar__hint">
-                API ID、API Hash、Bot Token 和管理员 ID 修改后需要重启服务，其它项会在后续任务中读取新配置。
-              </div>
               <el-button type="primary" @click="saveConfig('telegram')" :loading="saving" :disabled="reloading">
                 保存配置
               </el-button>
@@ -213,9 +252,6 @@
         <el-tab-pane label="Rclone配置" name="rclone">
           <el-card shadow="hover">
             <div class="panel-toolbar">
-              <div class="panel-toolbar__hint">
-                Rclone 配置保存后会立即生效，下次上传时直接读取最新配置，无需重启服务。
-              </div>
               <el-button type="primary" @click="saveConfig('rclone')" :loading="saving">
                 保存配置
               </el-button>
@@ -254,10 +290,6 @@
               <el-form-item label="启用Google Drive上传">
                 <el-switch v-model="configs.rclone.UP_GOOGLE_DRIVE" />
               </el-form-item>
-              <div v-if="configs.rclone.UP_GOOGLE_DRIVE" class="inline-note">
-                Google Drive 上传依赖 rclone OAuth2 token，请确认 <code>rclone.conf</code> 中存在
-                <code>{{ configs.rclone.GOOGLE_DRIVE_REMOTE || 'gdrive' }}</code> 这个 remote。
-              </div>
               <el-form-item label="Google Drive远程名称" v-if="configs.rclone.UP_GOOGLE_DRIVE">
                 <el-select
                   v-model="configs.rclone.GOOGLE_DRIVE_REMOTE"
@@ -290,9 +322,6 @@
               </el-form-item>
 
               <el-divider content-position="left">Rclone 配置文件管理</el-divider>
-              <div class="inline-note">
-                这里直接编辑 <code>rclone.conf</code>；保存时会自动备份原文件，配置采用 INI 格式，每个远程存储以 <code>[remote_name]</code> 开始。
-              </div>
               <el-form-item label="配置文件路径">
                 <el-input v-model="rcloneConfigPath" readonly />
               </el-form-item>
@@ -331,9 +360,6 @@
         <el-tab-pane label="下载配置" name="download">
           <el-card shadow="hover">
             <div class="panel-toolbar">
-              <div class="panel-toolbar__hint">
-                服务端下载配置保存后立即生效，后续下载任务会直接读取最新参数。
-              </div>
               <el-button type="primary" @click="saveConfig('download')" :loading="saving">
                 保存配置
               </el-button>
@@ -376,9 +402,6 @@
         <el-tab-pane label="Aria2配置" name="aria2">
           <el-card shadow="hover">
             <div class="panel-toolbar">
-              <div class="panel-toolbar__hint">
-                Aria2 配置保存后立即生效，下次连接时会直接读取最新配置。
-              </div>
               <el-button type="primary" @click="saveConfig('aria2')" :loading="saving">
                 保存配置
               </el-button>
@@ -397,9 +420,6 @@
         <el-tab-pane label="直链功能" name="stream">
           <el-card shadow="hover">
             <div class="panel-toolbar">
-              <div class="panel-toolbar__hint">
-                这里控制直链服务行为，保存后后续直链请求会按新配置运行。
-              </div>
               <el-button type="primary" @click="saveConfig('stream')" :loading="saving">
                 保存配置
               </el-button>
@@ -473,7 +493,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { getConfig, updateConfig, reloadConfig, getRcloneConfig, saveRcloneConfig, getRcloneRemotes, type RcloneRemote } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { checkServerConnection } from '@/utils/connection'
-import { getDesktopClientConfig, isValidDesktopProxyUrl, restartDesktopApp, saveDesktopClientConfig, checkForUpdate, downloadAndInstallUpdate, type UpdateProgress } from '@/utils/desktop'
+import { DEFAULT_DOWNLOAD_CONFIG, getDefaultDesktopDownloadDir, getDesktopClientConfig, isValidDesktopProxyUrl, pickDesktopDownloadDir, restartDesktopApp, saveDesktopClientConfig, checkForUpdate, downloadAndInstallUpdate, type UpdateProgress } from '@/utils/desktop'
 import type { Update } from '@tauri-apps/plugin-updater'
 import { getServerBaseUrl, isValidServerBaseUrl, setServerBaseUrl } from '@/utils/runtime'
 import { useRouter } from 'vue-router'
@@ -497,6 +517,18 @@ const desktopProxyEnabled = ref(false)
 const desktopProxyUrl = ref('')
 const desktopProxyStatus = ref<'idle' | 'enabled' | 'disabled' | 'pending'>('idle')
 const desktopProxyStatusText = ref('')
+
+const loadingDownloadConfig = ref(false)
+const savingDownloadConfig = ref(false)
+const defaultDesktopDownloadDir = ref('')
+const desktopDownloadDir = ref(DEFAULT_DOWNLOAD_CONFIG.downloadDir)
+const desktopMaxConcurrent = ref(DEFAULT_DOWNLOAD_CONFIG.maxConcurrentDownloads)
+const desktopThreadsPerDownload = ref(DEFAULT_DOWNLOAD_CONFIG.threadsPerDownload)
+
+const effectiveDesktopDownloadDir = computed(() => {
+  const configured = desktopDownloadDir.value.trim()
+  return configured || defaultDesktopDownloadDir.value || '读取中...'
+})
 
 const appVersion = __APP_VERSION__
 const checkingUpdate = ref(false)
@@ -796,6 +828,63 @@ async function restartDesktopClient() {
   }
 }
 
+async function loadDownloadConfig(showMessage = false) {
+  loadingDownloadConfig.value = true
+  try {
+    const [config, defaultDir] = await Promise.all([
+      getDesktopClientConfig(),
+      getDefaultDesktopDownloadDir(),
+    ])
+    const downloadConfig = config.download ?? DEFAULT_DOWNLOAD_CONFIG
+    defaultDesktopDownloadDir.value = defaultDir
+    desktopDownloadDir.value = downloadConfig.downloadDir ?? ''
+    desktopMaxConcurrent.value = downloadConfig.maxConcurrentDownloads
+    desktopThreadsPerDownload.value = downloadConfig.threadsPerDownload
+    if (showMessage) {
+      ElMessage.success('本地下载配置已读取')
+    }
+  } catch (err: any) {
+    console.error('加载本地下载配置失败:', err)
+    ElMessage.error(err.message || '加载本地下载配置失败')
+  } finally {
+    loadingDownloadConfig.value = false
+  }
+}
+
+async function saveDownloadConfig() {
+  savingDownloadConfig.value = true
+  try {
+    const current = await getDesktopClientConfig()
+    await saveDesktopClientConfig({
+      ...current,
+      download: {
+        downloadDir: desktopDownloadDir.value.trim(),
+        maxConcurrentDownloads: desktopMaxConcurrent.value,
+        threadsPerDownload: desktopThreadsPerDownload.value,
+      },
+    })
+    ElMessage.success('本地下载配置已保存并立即生效')
+    await loadDownloadConfig(false)
+  } catch (err: any) {
+    console.error('保存本地下载配置失败:', err)
+    ElMessage.error(err.message || '保存本地下载配置失败')
+  } finally {
+    savingDownloadConfig.value = false
+  }
+}
+
+async function handlePickDownloadDir() {
+  try {
+    const selected = await pickDesktopDownloadDir(desktopDownloadDir.value || defaultDesktopDownloadDir.value)
+    if (selected) {
+      desktopDownloadDir.value = selected
+    }
+  } catch (err: any) {
+    console.error('选择下载目录失败:', err)
+    ElMessage.error(err.message || '选择下载目录失败')
+  }
+}
+
 async function handleCheckUpdate() {
   checkingUpdate.value = true
   updateStatusText.value = ''
@@ -814,9 +903,18 @@ async function handleCheckUpdate() {
         ? `v${result.version} — ${result.body}`
         : `v${result.version} 可用`
       pendingUpdate = update
+    } else if (result.available) {
+      updateAvailable.value = false
+      updateVersion.value = result.version || ''
+      updateBody.value = [result.body, result.manualUrl ? `下载地址：${result.manualUrl}` : '']
+        .filter(Boolean)
+        .join('\n')
+      updateStatus.value = 'available'
+      updateStatusText.value = result.message || `发现 v${result.version}`
+      pendingUpdate = null
     } else {
       updateStatus.value = 'latest'
-      updateStatusText.value = '当前已是最新版本'
+      updateStatusText.value = result.message || '当前已是最新版本'
     }
   } catch (err: any) {
     console.error('检查更新失败:', err)
@@ -1039,6 +1137,7 @@ onMounted(() => {
   fetchConfigs()
   void testConnection(false)
   void loadDesktopProxyConfig()
+  void loadDownloadConfig()
   loadRcloneConfigFile()
   loadRcloneRemotes()
 })
@@ -1049,12 +1148,8 @@ onMounted(() => {
   @apply space-y-6;
 }
 
-.page-header {
-  @apply flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between;
-}
-
-.page-title {
-  @apply text-3xl font-bold text-gray-800;
+.scope-bar {
+  @apply flex items-center;
 }
 
 .scope-switch {
@@ -1065,40 +1160,8 @@ onMounted(() => {
   @apply space-y-4;
 }
 
-.client-overview {
-  @apply border border-slate-200 bg-slate-50;
-}
-
-.client-overview__content {
-  @apply flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between;
-}
-
-.client-overview__text {
-  @apply space-y-1;
-}
-
-.client-overview__main {
-  @apply text-sm font-medium text-slate-900;
-}
-
-.client-overview__sub {
-  @apply text-sm text-slate-600;
-}
-
-.section-toolbar {
-  @apply flex flex-col gap-4 rounded-2xl border border-amber-200 bg-amber-50 p-4;
-}
-
-.section-toolbar__summary {
-  @apply text-sm font-medium text-amber-900;
-}
-
-.section-toolbar__actions {
-  @apply flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between;
-}
-
-.section-toolbar__hint {
-  @apply text-xs text-amber-800;
+.server-actions {
+  @apply flex items-center justify-end;
 }
 
 .card-actions {
@@ -1107,10 +1170,6 @@ onMounted(() => {
 
 .panel-toolbar {
   @apply mb-5 flex flex-col gap-3 border-b border-slate-100 pb-4 lg:flex-row lg:items-center lg:justify-between;
-}
-
-.panel-toolbar__hint {
-  @apply text-sm text-slate-600;
 }
 
 .connection-status {
@@ -1129,12 +1188,46 @@ onMounted(() => {
   @apply rounded-xl bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-600 whitespace-pre-wrap;
 }
 
-.inline-note {
-  @apply mb-5 rounded-xl bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-600;
+.download-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px;
 }
 
-.quick-actions {
-  @apply space-y-3;
+.download-summary-tile {
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid #dbeafe;
+  background: linear-gradient(135deg, #f8fbff 0%, #ffffff 100%);
+}
+
+.download-summary-label {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.download-summary-value {
+  margin-top: 6px;
+  font-size: 24px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.download-summary-value.is-path {
+  font-size: 13px;
+  line-height: 1.6;
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.download-dir-row {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+}
+
+.download-dir-row :deep(.el-input) {
+  flex: 1;
 }
 
 .el-form-item__help {

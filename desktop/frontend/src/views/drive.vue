@@ -3,11 +3,6 @@
     <el-card shadow="hover">
       <template #header>
         <div class="drive-header">
-          <div>
-            <h2>我的网盘</h2>
-            <p class="drive-header-subtitle">浏览远程存储、查看容量并管理文件</p>
-          </div>
-
           <div v-if="availableRemotes.length > 0" class="drive-header-tools">
             <el-select
               v-model="currentRemote"
@@ -1174,18 +1169,6 @@ watch(paginatedItems, () => {
   justify-content: space-between;
   gap: 16px;
   flex-wrap: wrap;
-}
-
-.drive-header h2 {
-  margin: 0;
-  font-size: 20px;
-  font-weight: 600;
-}
-
-.drive-header-subtitle {
-  margin: 6px 0 0;
-  font-size: 13px;
-  color: #64748b;
 }
 
 .drive-header-tools {

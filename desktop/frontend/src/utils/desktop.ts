@@ -170,23 +170,122 @@ export interface UpdateCheckResult {
   version?: string
   body?: string
   date?: string
+  message?: string
+  installable?: boolean
+  manualUrl?: string
+  source?: 'native' | 'manifest'
+}
+
+interface PublishedUpdateInfo {
+  version: string
+  notes?: string
+  pubDate?: string
+  downloadUrl?: string
+}
+
+function normalizeVersion(value: string): string[] {
+  return value
+    .trim()
+    .replace(/^v/i, '')
+    .split(/[\.-]/)
+    .filter(Boolean)
+}
+
+function compareVersions(left: string, right: string): number {
+  const leftParts = normalizeVersion(left)
+  const rightParts = normalizeVersion(right)
+  const maxLength = Math.max(leftParts.length, rightParts.length)
+
+  for (let index = 0; index < maxLength; index += 1) {
+    const rawLeft = leftParts[index] ?? '0'
+    const rawRight = rightParts[index] ?? '0'
+    const leftNumber = Number(rawLeft)
+    const rightNumber = Number(rawRight)
+    const bothNumeric = Number.isFinite(leftNumber) && Number.isFinite(rightNumber)
+
+    if (bothNumeric) {
+      if (leftNumber > rightNumber) return 1
+      if (leftNumber < rightNumber) return -1
+      continue
+    }
+
+    if (rawLeft > rawRight) return 1
+    if (rawLeft < rawRight) return -1
+  }
+
+  return 0
+}
+
+async function getPublishedUpdateInfo(): Promise<PublishedUpdateInfo> {
+  return invokeDesktopCommand<PublishedUpdateInfo>('desktop_get_published_update_info')
 }
 
 export async function checkForUpdate(): Promise<{ result: UpdateCheckResult; update: Update | null }> {
-  const update = await check()
+  try {
+    const update = await check()
 
-  if (!update) {
-    return { result: { available: false }, update: null }
-  }
+    if (!update) {
+      return {
+        result: {
+          available: false,
+          installable: true,
+          message: '当前已是最新版本',
+          source: 'native',
+        },
+        update: null,
+      }
+    }
 
-  return {
-    result: {
-      available: true,
-      version: update.version,
-      body: update.body ?? undefined,
-      date: update.date ?? undefined,
-    },
-    update,
+    return {
+      result: {
+        available: true,
+        version: update.version,
+        body: update.body ?? undefined,
+        date: update.date ?? undefined,
+        installable: true,
+        source: 'native',
+      },
+      update,
+    }
+  } catch (nativeError: any) {
+    const nativeMessage = nativeError?.message || '自动更新服务不可用'
+
+    try {
+      const published = await getPublishedUpdateInfo()
+      const comparison = compareVersions(published.version, __APP_VERSION__)
+
+      if (comparison <= 0) {
+        return {
+          result: {
+            available: false,
+            version: published.version,
+            body: published.notes,
+            date: published.pubDate,
+            installable: false,
+            message: '当前已是最新版本',
+            source: 'manifest',
+          },
+          update: null,
+        }
+      }
+
+      return {
+        result: {
+          available: true,
+          version: published.version,
+          body: published.notes,
+          date: published.pubDate,
+          installable: false,
+          manualUrl: published.downloadUrl,
+          message: `发现 v${published.version}，但自动更新当前不可用，请手动下载安装`,
+          source: 'manifest',
+        },
+        update: null,
+      }
+    } catch (manifestError: any) {
+      const manifestMessage = manifestError?.message || '发布清单校验失败'
+      throw new Error(`${nativeMessage}；${manifestMessage}`)
+    }
   }
 }
 

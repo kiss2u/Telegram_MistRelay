@@ -20,6 +20,8 @@ use tauri_plugin_dialog::{DialogExt, FilePath};
 use url::Url;
 
 const PREVIEW_READY_BYTES: u64 = 4 * 1024 * 1024;
+const DESKTOP_UPDATER_MANIFEST_URL: &str =
+    "https://github.com/qianlong520/Telegram_MistRelay/releases/latest/download/latest.json";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -34,6 +36,29 @@ struct DesktopDownloadConfig {
     download_dir: String,
     max_concurrent_downloads: u32,
     threads_per_download: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct UpdaterManifestPlatform {
+    signature: String,
+    url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct UpdaterManifest {
+    version: String,
+    notes: Option<String>,
+    pub_date: Option<String>,
+    platforms: HashMap<String, UpdaterManifestPlatform>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopPublishedUpdateInfo {
+    version: String,
+    notes: Option<String>,
+    pub_date: Option<String>,
+    download_url: Option<String>,
 }
 
 impl Default for DesktopDownloadConfig {
@@ -321,6 +346,32 @@ fn build_http_client() -> Result<Client, String> {
     builder
         .build()
         .map_err(|error| format!("创建桌面网络客户端失败: {error}"))
+}
+
+fn fetch_published_desktop_update_info() -> Result<DesktopPublishedUpdateInfo, String> {
+    let response = build_http_client()?
+        .get(DESKTOP_UPDATER_MANIFEST_URL)
+        .send()
+        .map_err(|error| format!("请求更新清单失败: {error}"))?;
+
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!("请求更新清单失败: HTTP {status}"));
+    }
+
+    let manifest = response
+        .json::<UpdaterManifest>()
+        .map_err(|error| format!("解析更新清单失败: {error}"))?;
+
+    Ok(DesktopPublishedUpdateInfo {
+        version: manifest.version,
+        notes: manifest.notes,
+        pub_date: manifest.pub_date,
+        download_url: manifest
+            .platforms
+            .get("windows-x86_64")
+            .map(|platform| platform.url.clone()),
+    })
 }
 
 fn sanitize_path_component(value: &str) -> String {
@@ -1333,6 +1384,11 @@ fn desktop_get_transfer_status(
     snapshot_transfer_status(&transfer_id, &handle)
 }
 
+#[tauri::command]
+fn desktop_get_published_update_info() -> Result<DesktopPublishedUpdateInfo, String> {
+    fetch_published_desktop_update_info()
+}
+
 fn main() {
     let mut context = tauri::generate_context!();
     let runtime_state = DesktopRuntimeState::new()
@@ -1368,7 +1424,8 @@ fn main() {
             desktop_download_file,
             desktop_prepare_preview_file,
             desktop_start_preview_stream,
-            desktop_get_transfer_status
+            desktop_get_transfer_status,
+            desktop_get_published_update_info
         ])
         .run(context)
         .expect("error while running MistRelay desktop shell");

@@ -1,15 +1,6 @@
 <template>
   <div class="tasks-center-page">
     <el-card shadow="hover" class="tasks-page-shell">
-      <template #header>
-        <div class="flex justify-between items-center gap-4 flex-wrap">
-          <div>
-            <span class="text-xl font-semibold">任务中心</span>
-            <div class="page-subtitle">任务中心和任务队列已合并到同一页，通过标签切换。</div>
-          </div>
-        </div>
-      </template>
-
       <el-tabs v-model="pageTab" class="page-tabs" @tab-change="handlePageTabChange">
         <el-tab-pane name="center">
           <template #label>
@@ -21,8 +12,7 @@
 
           <el-card shadow="hover">
             <template #header>
-              <div class="flex justify-between items-center gap-4 flex-wrap">
-                <span class="text-xl font-semibold">任务中心</span>
+              <div class="flex justify-end items-center gap-4 flex-wrap">
                 <div class="flex gap-4 items-center">
                   <el-select v-model="limit" @change="handleLimitChange" style="width: 150px">
                     <el-option label="显示 50 条" :value="50" />
@@ -1484,42 +1474,6 @@ function updateGroupStats(group: DownloadGroup) {
 .tasks-center-page {
   @apply space-y-8;
   animation: fadeIn 0.5s ease-out;
-}
-
-.page-header {
-  @apply mb-8;
-  animation: slideInLeft 0.6s ease-out;
-}
-
-.page-title {
-  @apply text-4xl font-bold mb-3;
-  position: relative;
-  display: inline-block;
-}
-
-.title-text {
-  background: linear-gradient(135deg, #1f2937 0%, #667eea 50%, #764ba2 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  position: relative;
-  z-index: 1;
-}
-
-.title-decoration {
-  position: absolute;
-  bottom: -8px;
-  left: 0;
-  width: 80px;
-  height: 4px;
-  background: var(--gradient-primary);
-  border-radius: 2px;
-  animation: slideInLeft 0.8s ease-out 0.2s both;
-}
-
-.page-subtitle {
-  @apply text-gray-600 text-base;
-  font-weight: 500;
 }
 
 .tasks-center-page :deep(.el-card) {
