@@ -14,6 +14,7 @@ import asyncio
 import sqlite3
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote
 from aiohttp import web
 from aiohttp.http_exceptions import BadStatusLine
 from WebStreamer.bot import multi_clients, work_loads, channel_accessible_clients
@@ -24,7 +25,9 @@ from db import (
     fetch_recent_downloads, get_all_configs, get_config, set_config,
     get_download_id_by_gid, get_download_by_id, get_upload_by_id,
     mark_download_failed, update_upload_status, mark_upload_failed,
-    delete_download_record, browse_tg_media, get_tg_media_stats
+    delete_download_record, browse_tg_media, get_tg_media_stats,
+    get_tg_media_record_by_message_id, get_tg_media_records_by_media_group,
+    list_all_tg_media_records, delete_tg_media_records,
 )
 import configer
 
@@ -2381,6 +2384,110 @@ async def stream_handler(request: web.Request):
 
 class_cache = {}
 
+
+def build_telegram_stream_url(item: dict, hash_len: int) -> str | None:
+    uid = item.get("file_unique_id", "")
+    mid = item.get("message_id")
+    if not uid or not mid:
+        return None
+
+    secure_hash = utils.get_hash(uid, hash_len)
+    raw_name = (item.get("file_name") or "").strip() or f"media_{mid}"
+    safe_name = quote(raw_name, safe="")
+    return f"/{mid}/{safe_name}?hash={secure_hash}"
+
+
+def get_channel_deletion_clients() -> list[tuple[int, object]]:
+    """按负载升序返回可访问频道的 bot 客户端。"""
+    candidate_indices = [
+        idx for idx in channel_accessible_clients
+        if idx in multi_clients
+    ]
+
+    if not candidate_indices:
+        candidate_indices = list(multi_clients.keys())
+
+    candidate_indices.sort(key=lambda idx: work_loads.get(idx, 0))
+    return [(idx, multi_clients[idx]) for idx in candidate_indices if idx in multi_clients]
+
+
+def is_ignorable_delete_message_error(error: Exception) -> bool:
+    """消息已经不存在时允许继续清理数据库记录。"""
+    error_text = str(error).lower()
+    ignorable_markers = [
+        "message_id_invalid",
+        "msg_id_invalid",
+        "message ids are empty",
+        "message to delete not found",
+        "message not found",
+        "message identifier is not specified",
+    ]
+    return any(marker in error_text for marker in ignorable_markers)
+
+
+async def delete_bin_channel_messages(message_ids: list[int]) -> dict:
+    """删除 BIN_CHANNEL 中的消息，支持多 bot 回退。"""
+    normalized_ids = [int(message_id) for message_id in dict.fromkeys(message_ids) if message_id]
+    if not normalized_ids:
+        return {
+            "deleted_message_count": 0,
+            "cleanup_only": False,
+            "client_index": None,
+        }
+
+    if not Var.BIN_CHANNEL:
+        raise RuntimeError("BIN_CHANNEL 未配置，无法删除频道消息")
+
+    clients = get_channel_deletion_clients()
+    if not clients:
+        raise RuntimeError("没有可用的 bot 客户端用于删除频道消息")
+
+    last_error = None
+
+    for index, client in clients:
+        deleted_message_count = 0
+        cleanup_only = False
+        try:
+            for offset in range(0, len(normalized_ids), 100):
+                chunk = normalized_ids[offset:offset + 100]
+                try:
+                    result = await client.delete_messages(
+                        chat_id=Var.BIN_CHANNEL,
+                        message_ids=chunk,
+                    )
+                    if isinstance(result, int):
+                        deleted_message_count += result
+                    elif isinstance(result, list):
+                        deleted_message_count += len(result)
+                    else:
+                        deleted_message_count += len(chunk)
+                except Exception as chunk_error:
+                    if is_ignorable_delete_message_error(chunk_error):
+                        cleanup_only = True
+                        logger.info(
+                            f"频道消息已不存在，继续清理数据库记录: {chunk} (bot {index})"
+                        )
+                        continue
+                    raise
+
+            return {
+                "deleted_message_count": deleted_message_count,
+                "cleanup_only": cleanup_only,
+                "client_index": index,
+            }
+        except Exception as error:
+            last_error = error
+            logger.warning(f"bot {index} 删除频道消息失败: {error}")
+
+    if last_error and is_ignorable_delete_message_error(last_error):
+        return {
+            "deleted_message_count": 0,
+            "cleanup_only": True,
+            "client_index": None,
+        }
+
+    raise RuntimeError(f"删除频道消息失败: {last_error}" if last_error else "删除频道消息失败")
+
 async def media_streamer(request: web.Request, message_id: int, secure_hash: str):
     range_header = request.headers.get("Range", 0)
     
@@ -2527,7 +2634,7 @@ async def telegram_browse_handler(request: web.Request):
             mid = item.get('message_id')
             if uid and mid:
                 item['hash'] = utils.get_hash(uid, hash_len)
-                item['stream_url'] = f"{item['hash']}{mid}"
+                item['stream_url'] = build_telegram_stream_url(item, hash_len) or f"{item['hash']}{mid}"
 
         return web.json_response({"success": True, **result})
     except Exception as e:
@@ -2543,6 +2650,118 @@ async def telegram_usage_handler(request: web.Request):
         return web.json_response({"success": True, "data": stats})
     except Exception as e:
         logger.error(f"Telegram usage API error: {e}", exc_info=True)
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+@routes.delete("/api/telegram/item/{message_id}")
+async def telegram_delete_item_handler(request: web.Request):
+    """删除单个 tg 网盘文件对应的频道消息和数据库记录。"""
+    try:
+        message_id = int(request.match_info["message_id"])
+        record = get_tg_media_record_by_message_id(message_id)
+        if not record:
+            return web.json_response({"success": False, "error": "Telegram 文件记录不存在"}, status=404)
+
+        deletion = await delete_bin_channel_messages([message_id])
+        cleanup = delete_tg_media_records([record["file_unique_id"]])
+
+        action_message = "频道消息已删除并清理记录"
+        if deletion["cleanup_only"]:
+            action_message = "频道消息不存在，已清理数据库记录"
+
+        return web.json_response({
+            "success": True,
+            "message": action_message,
+            "data": {
+                **cleanup,
+                **deletion,
+                "message_id": message_id,
+            },
+        })
+    except ValueError:
+        return web.json_response({"success": False, "error": "无效的 message_id"}, status=400)
+    except Exception as e:
+        logger.error(f"Telegram delete item API error: {e}", exc_info=True)
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+@routes.delete("/api/telegram/group/{media_group_id}")
+async def telegram_delete_group_handler(request: web.Request):
+    """删除整个 Telegram 媒体组对应的频道消息和数据库记录。"""
+    try:
+        media_group_id = request.match_info["media_group_id"].strip()
+        if not media_group_id:
+            return web.json_response({"success": False, "error": "media_group_id 不能为空"}, status=400)
+
+        records = get_tg_media_records_by_media_group(media_group_id)
+        if not records:
+            return web.json_response({"success": False, "error": "Telegram 媒体组不存在"}, status=404)
+
+        message_ids = [record["message_id"] for record in records]
+        file_unique_ids = [record["file_unique_id"] for record in records]
+
+        deletion = await delete_bin_channel_messages(message_ids)
+        cleanup = delete_tg_media_records(file_unique_ids)
+
+        action_message = "媒体组已删除并清理记录"
+        if deletion["cleanup_only"]:
+            action_message = "频道媒体组消息不存在，已清理数据库记录"
+
+        return web.json_response({
+            "success": True,
+            "message": action_message,
+            "data": {
+                **cleanup,
+                **deletion,
+                "media_group_id": media_group_id,
+                "message_count": len(message_ids),
+            },
+        })
+    except Exception as e:
+        logger.error(f"Telegram delete group API error: {e}", exc_info=True)
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+@routes.delete("/api/telegram/all")
+async def telegram_clear_all_handler(request: web.Request):
+    """清空整个 tg 网盘：删除频道消息并清理 tg_media/downloads/uploads 记录。"""
+    try:
+        records = list_all_tg_media_records()
+        if not records:
+            return web.json_response({
+                "success": True,
+                "message": "tg 网盘已为空",
+                "data": {
+                    "deleted_media": 0,
+                    "deleted_downloads": 0,
+                    "deleted_uploads": 0,
+                    "deleted_message_count": 0,
+                    "cleanup_only": False,
+                    "client_index": None,
+                },
+            })
+
+        message_ids = [record["message_id"] for record in records]
+        file_unique_ids = [record["file_unique_id"] for record in records]
+
+        deletion = await delete_bin_channel_messages(message_ids)
+        cleanup = delete_tg_media_records(file_unique_ids)
+
+        action_message = "tg 网盘已清空"
+        if deletion["cleanup_only"]:
+            action_message = "频道消息不存在，已清空 tg 网盘数据库记录"
+
+        return web.json_response({
+            "success": True,
+            "message": action_message,
+            "data": {
+                **cleanup,
+                **deletion,
+                "message_count": len(message_ids),
+            },
+        })
+    except Exception as e:
+        logger.error(f"Telegram clear all API error: {e}", exc_info=True)
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 

@@ -118,6 +118,17 @@
               />
             </el-select>
 
+            <el-button
+              v-if="isTelegramMode"
+              type="danger"
+              plain
+              :icon="Delete"
+              :disabled="telegramTotal === 0"
+              @click="handleClearTelegramMedia"
+            >
+              清空 tg 网盘
+            </el-button>
+
             <el-input
               v-model="searchKeyword"
               placeholder="搜索文件名"
@@ -221,7 +232,7 @@
                   >
                     下载
                   </el-button>
-                  <el-button v-if="!isTelegramMode" link type="danger" @click.stop="handleDelete(item)">
+                  <el-button link type="danger" @click.stop="handleDelete(item)">
                     删除
                   </el-button>
                 </div>
@@ -296,7 +307,6 @@
                     @click.stop="handleDownload(item)"
                   />
                   <el-button
-                    v-if="!isTelegramMode"
                     circle
                     size="small"
                     type="danger"
@@ -344,8 +354,8 @@
             <el-button v-if="!selectedItem.isDir" @click="handleDownload(selectedItem)" :loading="Boolean(downloadingPaths[selectedItem.path])">
               下载到本地
             </el-button>
-            <el-button v-if="!isTelegramMode" type="danger" plain @click="handleDelete(selectedItem)">
-              删除
+            <el-button type="danger" plain @click="handleDelete(selectedItem)">
+              {{ isTelegramMode && selectedItem.isDir ? '删除媒体组' : '删除' }}
             </el-button>
           </div>
 
@@ -461,7 +471,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { HomeFilled, Document, Folder, Search, List, Grid, Picture, VideoPlay, Sort, Download, Delete, RefreshRight } from '@element-plus/icons-vue'
-import { getRcloneRemotes, browseDrive, getThumbnail, deleteFile, getDriveUsage, browseTelegram, getTelegramUsage, type RcloneRemote, type DriveItem, type DriveUsageResponse, type TelegramMediaItem, type TelegramUsageStats } from '@/api'
+import { getRcloneRemotes, browseDrive, getThumbnail, deleteFile, getDriveUsage, browseTelegram, getTelegramUsage, deleteTelegramItem, deleteTelegramGroup, clearTelegramMedia, type RcloneRemote, type DriveItem, type DriveUsageResponse, type TelegramMediaItem, type TelegramUsageStats } from '@/api'
 import VideoPlayer from '@/components/VideoPlayer.vue'
 import {
   getDesktopTransferStatus,
@@ -489,6 +499,7 @@ const TELEGRAM_REMOTE_NAME = '__telegram__'
 
 interface TelegramItemMeta {
   streamUrl: string
+  hash: string
   caption: string | null
   duration: number | null
   messageId: number
@@ -1088,6 +1099,7 @@ function mapTelegramItem(tg: TelegramMediaItem): DriveItem {
   const path = `tg://${tg.message_id}`
   telegramItemMeta.value[path] = {
     streamUrl: tg.stream_url,
+    hash: tg.hash,
     caption: tg.caption,
     duration: tg.duration,
     messageId: tg.message_id,
@@ -1224,10 +1236,102 @@ async function handleDownload(item: DriveItem) {
   })
 }
 
+function getTelegramGroupIdFromItem(item: DriveItem): string | null {
+  if (item.path.startsWith(TELEGRAM_GROUP_PATH_PREFIX)) {
+    return item.path.slice(TELEGRAM_GROUP_PATH_PREFIX.length)
+  }
+
+  return telegramItemMeta.value[item.path]?.mediaGroupId || null
+}
+
+async function refreshTelegramViewAfterMutation() {
+  await loadTelegramUsage(true)
+  await browseTelegramChannel()
+}
+
+async function handleClearTelegramMedia() {
+  await ElMessageBox.confirm(
+    '确定要清空整个 tg 网盘吗？这会删除频道内对应消息，并清理相关下载/上传记录。',
+    '确认清空',
+    {
+      confirmButtonText: '清空',
+      cancelButtonText: '取消',
+      type: 'warning',
+    }
+  )
+
+  loading.value = true
+  try {
+    const response = await clearTelegramMedia()
+    if (response.success) {
+      currentPath.value = '/'
+      selectedItemPath.value = ''
+      await refreshTelegramViewAfterMutation()
+      ElMessage.success(response.message || 'tg 网盘已清空')
+    } else {
+      ElMessage.error(response.error || '清空 tg 网盘失败')
+    }
+  } catch (err: any) {
+    if (err !== 'cancel' && err !== 'close') {
+      console.error('清空 tg 网盘失败:', err)
+      ElMessage.error(err.message || '清空 tg 网盘失败')
+    }
+  } finally {
+    loading.value = false
+  }
+}
+
 // 删除文件
 function handleDelete(item: DriveItem) {
   if (isTelegramMode.value) {
-    ElMessage.info('Telegram 频道文件不支持从此处删除')
+    const isGroup = item.isDir
+    const mediaGroupId = isGroup ? getTelegramGroupIdFromItem(item) : null
+    const messageId = !isGroup ? telegramItemMeta.value[item.path]?.messageId : null
+    const targetLabel = isGroup ? '媒体组' : '文件'
+    const targetName = item.name
+
+    if (isGroup && !mediaGroupId) {
+      ElMessage.error('媒体组标识缺失，无法删除')
+      return
+    }
+    if (!isGroup && !messageId) {
+      ElMessage.error('消息 ID 缺失，无法删除')
+      return
+    }
+
+    ElMessageBox.confirm(
+      `确定要删除 ${targetLabel} "${targetName}" 吗？这会删除频道内对应消息，并清理相关记录。`,
+      '确认删除',
+      {
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        type: 'warning',
+      }
+    ).then(async () => {
+      loading.value = true
+      try {
+        const response = isGroup
+          ? await deleteTelegramGroup(mediaGroupId!)
+          : await deleteTelegramItem(messageId!)
+
+        if (response.success) {
+          if (isGroup && currentTelegramGroupId.value === mediaGroupId) {
+            currentPath.value = '/'
+          }
+          await refreshTelegramViewAfterMutation()
+          ElMessage.success(response.message || '删除成功')
+        } else {
+          ElMessage.error(response.error || '删除失败')
+        }
+      } catch (err: any) {
+        console.error('删除 tg 网盘项目失败:', err)
+        ElMessage.error(err.message || '删除失败')
+      } finally {
+        loading.value = false
+      }
+    }).catch(() => {
+      // 取消删除
+    })
     return
   }
   ElMessageBox.confirm(
@@ -1296,16 +1400,19 @@ function getSourceUrlForItem(row: DriveItem): string {
 function getTelegramDirectLink(row: DriveItem): string {
   const meta = telegramItemMeta.value[row.path]
   const rawStreamUrl = meta?.streamUrl?.trim()
+  const fallbackShortPath = meta?.hash && meta?.messageId ? `/${meta.hash}${meta.messageId}` : null
 
-  if (!rawStreamUrl) {
+  if (!rawStreamUrl && !fallbackShortPath) {
     throw new Error('Telegram 直链地址缺失，请刷新列表后重试')
   }
 
-  if (/^https?:\/\//i.test(rawStreamUrl)) {
+  if (rawStreamUrl && /^https?:\/\//i.test(rawStreamUrl)) {
     return rawStreamUrl
   }
 
-  const normalizedPath = `/${rawStreamUrl.replace(/^\/+/, '')}`
+  const normalizedPath = rawStreamUrl
+    ? `/${rawStreamUrl.replace(/^\/+/, '')}`
+    : fallbackShortPath!
   return toAbsoluteServerUrl(normalizedPath)
 }
 

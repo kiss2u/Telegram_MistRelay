@@ -94,26 +94,42 @@ async def process_media_group(messages: list, queue_reply_msg=None):
         if not forwarded_messages:
             return
         
-        # 为每个媒体文件生成直链
+        # 为每个媒体文件生成直链，并把已转发到频道的消息写入 tg_media
         stream_links = []
-        download_links = []
-        
+        download_entries = []
+
         for original_msg, log_msg in forwarded_messages:
             try:
                 file_hash = get_hash(log_msg, Var.HASH_LENGTH)
                 stream_link = f"{Var.URL}{log_msg.id}/{quote_plus(get_name(original_msg))}?hash={file_hash}"
                 short_link = f"{Var.URL}{file_hash}{log_msg.id}"
                 file_name = get_name(original_msg)
+                log_media = getattr(log_msg, log_msg.media.value, None) if getattr(log_msg, "media", None) else None
+                file_unique_id = None
+
+                if log_media:
+                    try:
+                        file_unique_id = save_tg_media(log_msg, log_media)
+                    except Exception as db_e:
+                        logger.error(f"记录频道媒体到数据库失败: {db_e}", exc_info=True)
+
+                should_download = should_download_file(original_msg)
                 
-                stream_links.append({
+                link_entry = {
                     'name': file_name,
                     'full_link': stream_link,
-                    'short_link': short_link
-                })
+                    'short_link': short_link,
+                    'should_download': should_download,
+                    'original_msg': original_msg,
+                    'log_msg': log_msg,
+                    'log_media': log_media,
+                    'file_unique_id': file_unique_id,
+                }
+                stream_links.append(link_entry)
                 
                 # 检查是否应该下载（图片类不下载）
-                if should_download_file(original_msg):
-                    download_links.append(stream_link)
+                if should_download:
+                    download_entries.append(link_entry)
                     logger.info(f"直链已生成（将下载）： {stream_link} for {first_msg.from_user.first_name}")
                 else:
                     logger.info(f"直链已生成（仅转发）： {stream_link} for {first_msg.from_user.first_name}")
@@ -125,7 +141,7 @@ async def process_media_group(messages: list, queue_reply_msg=None):
         if len(stream_links) == 1:
             # 单个文件
             link_info = stream_links[0]
-            download_status = "（将下载）" if len(download_links) > 0 else "（仅转发）"
+            download_status = "（将下载）" if link_info['should_download'] else "（仅转发）"
             reply_text = (
                 f"🔗 <b>直链已准备好{download_status}</b>\n\n"
                 f"📁 <b>文件:</b> <code>{link_info['name']}</code>\n\n"
@@ -135,7 +151,7 @@ async def process_media_group(messages: list, queue_reply_msg=None):
             main_link = link_info['full_link']
         else:
             # 多个文件（媒体组）
-            download_count = len(download_links)
+            download_count = len(download_entries)
             skip_count = len(stream_links) - download_count
             reply_text = (
                 f"🔗 <b>媒体组直链已准备好</b>\n\n"
@@ -149,8 +165,7 @@ async def process_media_group(messages: list, queue_reply_msg=None):
             reply_text += "\n📋 <b>文件列表:</b>\n\n"
             
             for i, link_info in enumerate(stream_links, 1):
-                # 检查这个文件是否在下载列表中
-                is_download = link_info['full_link'] in download_links
+                is_download = link_info['should_download']
                 status_icon = "⬇️" if is_download else "📷"
                 status_text = "将下载" if is_download else "仅转发"
                 reply_text += (
@@ -170,7 +185,7 @@ async def process_media_group(messages: list, queue_reply_msg=None):
         
         # 自动添加到aria2下载队列（如果启用且是管理员）
         task_gids = []  # 记录添加的下载任务GID
-        if Var.AUTO_DOWNLOAD and aria2_client and is_admin and download_links:
+        if Var.AUTO_DOWNLOAD and aria2_client and is_admin and download_entries:
             try:
                 # 批量添加下载任务，智能等待避免并发过高
                 success_count = 0
@@ -215,11 +230,12 @@ async def process_media_group(messages: list, queue_reply_msg=None):
                 
                 # 如果启用小文件跳过，允许并发下载；否则串行下载
                 if skip_small_files:
-                    logger.info(f"[媒体组下载] 已启用小文件跳过，将并发添加 {len(download_links)} 个下载任务")
+                    logger.info(f"[媒体组下载] 已启用小文件跳过，将并发添加 {len(download_entries)} 个下载任务")
                 else:
-                    logger.info(f"[媒体组下载] 未启用小文件跳过，将串行添加 {len(download_links)} 个下载任务（避免并发过高）")
+                    logger.info(f"[媒体组下载] 未启用小文件跳过，将串行添加 {len(download_entries)} 个下载任务（避免并发过高）")
                 
-                for i, link in enumerate(download_links):
+                for i, entry in enumerate(download_entries):
+                    link = entry['full_link']
                     retry_count = 0
                     max_retries = 3
                     added_successfully = False
@@ -227,7 +243,7 @@ async def process_media_group(messages: list, queue_reply_msg=None):
                     # 检查文件大小（在添加下载任务之前）
                     if skip_small_files:
                         try:
-                            original_msg = forwarded_messages[i][0] if i < len(forwarded_messages) else first_msg
+                            original_msg = entry['original_msg']
                             if original_msg and original_msg.media:
                                 media = getattr(original_msg, original_msg.media.value, None)
                                 if media:
@@ -271,12 +287,11 @@ async def process_media_group(messages: list, queue_reply_msg=None):
 
                                 # 记录 Telegram 媒体与下载任务到数据库
                                 try:
-                                    original_msg = forwarded_messages[i][0] if i < len(forwarded_messages) else first_msg
-                                    if original_msg and original_msg.media:
-                                        media = getattr(original_msg, original_msg.media.value, None)
-                                        if media:
-                                            file_unique_id = save_tg_media(original_msg, media)
-                                            create_download(file_unique_id, gid, link)
+                                    file_unique_id = entry['file_unique_id']
+                                    if not file_unique_id and entry['log_media']:
+                                        file_unique_id = save_tg_media(entry['log_msg'], entry['log_media'])
+                                    if file_unique_id:
+                                        create_download(file_unique_id, gid, link)
                                 except Exception as db_e:
                                     logger.error(f"记录下载任务到数据库失败: {db_e}", exc_info=True)
                                 
@@ -298,7 +313,7 @@ async def process_media_group(messages: list, queue_reply_msg=None):
                                             register_gid_queue_msg(gid, queue_reply_msg)
                                         except Exception as reg_e:
                                             logger.debug(f"注册GID队列消息失败: {reg_e}")
-                                    logger.debug(f"成功添加任务 {i+1}/{len(download_links)}: {link[:50]}...")
+                                    logger.debug(f"成功添加任务 {i+1}/{len(download_entries)}: {link[:50]}...")
                                 else:
                                     # 串行模式：等待任务真正开始
                                     if await wait_for_task_start(gid):
@@ -316,7 +331,7 @@ async def process_media_group(messages: list, queue_reply_msg=None):
                                                 register_gid_queue_msg(gid, queue_reply_msg)
                                             except Exception as reg_e:
                                                 logger.debug(f"注册GID队列消息失败: {reg_e}")
-                                        logger.debug(f"成功添加任务 {i+1}/{len(download_links)}: {link[:50]}...")
+                                        logger.debug(f"成功添加任务 {i+1}/{len(download_entries)}: {link[:50]}...")
                                     else:
                                         # 任务被中止或失败，重试
                                         if retry_count < max_retries:
@@ -341,7 +356,7 @@ async def process_media_group(messages: list, queue_reply_msg=None):
                             
                             # 如果未启用小文件跳过，添加延迟避免请求过快
                             # 如果启用小文件跳过，允许并发下载，不需要延迟
-                            if not skip_small_files and added_successfully and i < len(download_links) - 1:
+                            if not skip_small_files and added_successfully and i < len(download_entries) - 1:
                                 await asyncio.sleep(1.0)  # 成功添加后延迟1秒，确保任务稳定
                                 
                         except Exception as e:
@@ -362,10 +377,10 @@ async def process_media_group(messages: list, queue_reply_msg=None):
                         reply_text += f"  ⚠️ 添加失败: {failed_count} 个任务"
                     else:
                         reply_text += f"  ✅ 已自动添加 {success_count} 个任务到下载队列"
-                    logger.info(f"已将 {success_count}/{len(download_links)} 个直链添加到aria2下载队列")
+                    logger.info(f"已将 {success_count}/{len(download_entries)} 个直链添加到aria2下载队列")
                 else:
                     reply_text += "\n\n⚠️ <b>所有任务添加失败，请手动添加</b>"
-                    logger.error(f"所有 {len(download_links)} 个直链添加失败")
+                    logger.error(f"所有 {len(download_entries)} 个直链添加失败")
             except Exception as e:
                 logger.error(f"批量添加直链到aria2失败: {e}", exc_info=True)
                 reply_text += "\n\n⚠️ <b>添加到下载队列失败，请手动添加</b>"
@@ -398,7 +413,7 @@ async def process_media_group(messages: list, queue_reply_msg=None):
                         "✅ <b>已收到您的消息</b>\n\n"
                         "📥 消息正在处理中...\n"
                         f"📊 共 {len(stream_links)} 个文件\n"
-                        f"⬇️ {len(download_links)} 个将下载\n"
+                        f"⬇️ {len(download_entries)} 个将下载\n"
                         "🔄 请稍候，处理完成后会通知您"
                     )
                     await queue_reply_msg.edit_text(
@@ -409,7 +424,7 @@ async def process_media_group(messages: list, queue_reply_msg=None):
                     logger.debug(f"更新队列通知消息失败: {e}")
             
             # 记录日志
-            logger.info(f"已处理媒体组（不发送直链信息）：共 {len(stream_links)} 个文件，{len(download_links)} 个已添加到下载队列")
+            logger.info(f"已处理媒体组（不发送直链信息）：共 {len(stream_links)} 个文件，{len(download_entries)} 个已添加到下载队列")
         
         # 如果没有创建下载任务，且没有发送直链信息，保留队列通知消息以便后续更新
         # 如果创建了下载任务，队列通知消息会在清理完成时更新为完成状态
@@ -468,6 +483,13 @@ async def process_single_media(m: Message, queue_reply_msg=None):
     try:
         # 转发到日志频道并生成直链
         log_msg = await m.forward(chat_id=Var.BIN_CHANNEL)
+        log_media = getattr(log_msg, log_msg.media.value, None) if getattr(log_msg, "media", None) else None
+        saved_file_unique_id = None
+        if log_media:
+            try:
+                saved_file_unique_id = save_tg_media(log_msg, log_media)
+            except Exception as db_e:
+                logger.error(f"记录频道媒体到数据库失败: {db_e}", exc_info=True)
         file_hash = get_hash(log_msg, Var.HASH_LENGTH)
         stream_link = f"{Var.URL}{log_msg.id}/{quote_plus(get_name(m))}?hash={file_hash}"
         short_link = f"{Var.URL}{file_hash}{log_msg.id}"
@@ -524,8 +546,10 @@ async def process_single_media(m: Message, queue_reply_msg=None):
                             task_gid = result.get('result')
                             # 记录 Telegram 媒体与下载任务到数据库
                             try:
-                                if media:
-                                    file_unique_id = save_tg_media(m, media)
+                                file_unique_id = saved_file_unique_id
+                                if not file_unique_id and log_media:
+                                    file_unique_id = save_tg_media(log_msg, log_media)
+                                if file_unique_id:
                                     create_download(file_unique_id, task_gid, stream_link)
                                     mark_download_started(task_gid)
                             except Exception as db_e:

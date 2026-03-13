@@ -436,6 +436,23 @@ export interface TelegramUsageResponse {
   error?: string
 }
 
+export interface TelegramDeleteResponse {
+  success: boolean
+  message?: string
+  data?: {
+    deleted_media: number
+    deleted_downloads: number
+    deleted_uploads: number
+    deleted_message_count: number
+    cleanup_only: boolean
+    client_index: number | null
+    message_id?: number
+    media_group_id?: string
+    message_count?: number
+  }
+  error?: string
+}
+
 export function browseTelegram(params: {
   page?: number
   page_size?: number
@@ -449,6 +466,18 @@ export function browseTelegram(params: {
 
 export function getTelegramUsage(): Promise<TelegramUsageResponse> {
   return api.get<TelegramUsageResponse>('/telegram/usage').then(r => r.data)
+}
+
+export function deleteTelegramItem(messageId: number): Promise<TelegramDeleteResponse> {
+  return api.delete<TelegramDeleteResponse>(`/telegram/item/${messageId}`).then(r => r.data)
+}
+
+export function deleteTelegramGroup(mediaGroupId: string): Promise<TelegramDeleteResponse> {
+  return api.delete<TelegramDeleteResponse>(`/telegram/group/${encodeURIComponent(mediaGroupId)}`).then(r => r.data)
+}
+
+export function clearTelegramMedia(): Promise<TelegramDeleteResponse> {
+  return api.delete<TelegramDeleteResponse>('/telegram/all').then(r => r.data)
 }
 
 // ==================== 用户认证 API ====================

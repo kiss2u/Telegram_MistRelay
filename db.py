@@ -282,10 +282,27 @@ def init_db():
                 logger.warning(f"从config.yml导入配置时出错: {e}")
 
 
-def save_tg_media(message, media) -> str:
+def save_tg_media(message, media=None) -> str:
     """
-    保存/忽略一条 Telegram 媒体元数据，返回 file_unique_id。
+    保存一条 Telegram 媒体元数据，返回 file_unique_id。
+
+    当同一个 file_unique_id 已存在时，使用最新消息元数据覆盖，
+    以便 tg 网盘始终指向 bot 实际转发到频道中的那条消息。
     """
+    if media is None:
+        media = (
+            getattr(message, "audio", None)
+            or getattr(message, "document", None)
+            or getattr(message, "photo", None)
+            or getattr(message, "sticker", None)
+            or getattr(message, "animation", None)
+            or getattr(message, "video", None)
+            or getattr(message, "voice", None)
+            or getattr(message, "video_note", None)
+        )
+    if media is None:
+        raise ValueError("message does not contain supported media")
+
     file_unique_id = media.file_unique_id
     file_id = media.file_id
 
@@ -303,7 +320,7 @@ def save_tg_media(message, media) -> str:
     with db_cursor() as cur:
         cur.execute(
             """
-            INSERT OR IGNORE INTO tg_media (
+            INSERT INTO tg_media (
                 file_unique_id, chat_id, message_id, from_user_id, sender_chat_id,
                 file_id, file_name, mime_type, file_size,
                 duration, width, height,
@@ -316,6 +333,25 @@ def save_tg_media(message, media) -> str:
                       ?, ?, ?,
                       ?, ?, ?,
                       ?)
+            ON CONFLICT(file_unique_id) DO UPDATE SET
+                chat_id = excluded.chat_id,
+                message_id = excluded.message_id,
+                from_user_id = excluded.from_user_id,
+                sender_chat_id = excluded.sender_chat_id,
+                file_id = excluded.file_id,
+                file_name = excluded.file_name,
+                mime_type = excluded.mime_type,
+                file_size = excluded.file_size,
+                duration = excluded.duration,
+                width = excluded.width,
+                height = excluded.height,
+                caption = excluded.caption,
+                caption_entities = excluded.caption_entities,
+                message_date = excluded.message_date,
+                media_group_id = excluded.media_group_id,
+                has_media_spoiler = excluded.has_media_spoiler,
+                supports_streaming = excluded.supports_streaming,
+                thumbs = excluded.thumbs
             """,
             (
                 file_unique_id,
@@ -2040,6 +2076,124 @@ def get_tg_media_stats() -> dict:
     }
 
 
+def get_tg_media_record_by_message_id(message_id: int) -> dict | None:
+    """根据频道消息 ID 获取单条 tg_media 记录。"""
+    with db_conn() as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT
+                file_unique_id, chat_id, message_id, file_name,
+                media_group_id, message_date
+            FROM tg_media
+            WHERE message_id = ?
+            """,
+            (message_id,),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def get_tg_media_records_by_media_group(media_group_id: str) -> list[dict]:
+    """根据 Telegram 媒体组 ID 获取对应 tg_media 记录。"""
+    with db_conn() as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT
+                file_unique_id, chat_id, message_id, file_name,
+                media_group_id, message_date
+            FROM tg_media
+            WHERE media_group_id = ?
+            ORDER BY message_id ASC
+            """,
+            (media_group_id,),
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+
+def list_all_tg_media_records() -> list[dict]:
+    """列出全部 tg_media 记录，用于批量清理 tg 网盘。"""
+    with db_conn() as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT
+                file_unique_id, chat_id, message_id, file_name,
+                media_group_id, message_date
+            FROM tg_media
+            ORDER BY message_id ASC
+            """
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+
+def delete_tg_media_records(file_unique_ids: list[str]) -> dict:
+    """
+    删除指定 tg_media 记录及其关联的 downloads/uploads 记录。
+
+    注意：
+    - 这里只清理数据库记录，不删除本地文件。
+    - uploads/downloads 不一定开启了外键级联，因此显式删除。
+    """
+    ids = [file_unique_id for file_unique_id in dict.fromkeys(file_unique_ids) if file_unique_id]
+    if not ids:
+        return {
+            'deleted_media': 0,
+            'deleted_downloads': 0,
+            'deleted_uploads': 0,
+        }
+
+    placeholders = ','.join('?' for _ in ids)
+
+    with db_conn() as conn:
+        cur = conn.cursor()
+
+        cur.execute(
+            f"SELECT COUNT(*) FROM tg_media WHERE file_unique_id IN ({placeholders})",
+            tuple(ids),
+        )
+        media_count = cur.fetchone()[0]
+
+        cur.execute(
+            f"SELECT id FROM downloads WHERE file_unique_id IN ({placeholders})",
+            tuple(ids),
+        )
+        download_ids = [row[0] for row in cur.fetchall()]
+        download_count = len(download_ids)
+
+        upload_count = 0
+        if download_ids:
+            upload_placeholders = ','.join('?' for _ in download_ids)
+            cur.execute(
+                f"SELECT COUNT(*) FROM uploads WHERE download_id IN ({upload_placeholders})",
+                tuple(download_ids),
+            )
+            upload_count = cur.fetchone()[0]
+            cur.execute(
+                f"DELETE FROM uploads WHERE download_id IN ({upload_placeholders})",
+                tuple(download_ids),
+            )
+
+        cur.execute(
+            f"DELETE FROM downloads WHERE file_unique_id IN ({placeholders})",
+            tuple(ids),
+        )
+        cur.execute(
+            f"DELETE FROM tg_media WHERE file_unique_id IN ({placeholders})",
+            tuple(ids),
+        )
+
+    return {
+        'deleted_media': media_count,
+        'deleted_downloads': download_count,
+        'deleted_uploads': upload_count,
+    }
+
+
 def get_user_by_username(username: str) -> dict | None:
     with db_conn() as conn:
         cur = conn.cursor()
@@ -2069,4 +2223,3 @@ def list_users() -> list:
         cur = conn.cursor()
         cur.execute("SELECT id, username, role, created_at, updated_at FROM users ORDER BY id")
         return [dict(r) for r in cur.fetchall()]
-
