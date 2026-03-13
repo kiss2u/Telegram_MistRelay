@@ -716,6 +716,30 @@ fn download_chunk(
     Ok(())
 }
 
+fn spawn_progress_emitter(
+    app: tauri::AppHandle,
+    transfer_id: String,
+    handle: Arc<TransferHandle>,
+) {
+    thread::spawn(move || {
+        loop {
+            let status = match snapshot_transfer_status(&transfer_id, &handle) {
+                Ok(s) => s,
+                Err(_) => break,
+            };
+
+            let is_terminal = status.state == "completed" || status.state == "error";
+            let _ = app.emit("desktop-transfer-progress", &status);
+
+            if is_terminal {
+                break;
+            }
+
+            thread::sleep(Duration::from_millis(250));
+        }
+    });
+}
+
 fn snapshot_transfer_status(transfer_id: &str, handle: &TransferHandle) -> Result<DesktopTransferStatus, String> {
     let (lock, _) = &*handle.inner;
     let progress = lock.lock().map_err(|_| "缓存状态已损坏".to_string())?;
@@ -1109,6 +1133,7 @@ fn restart_desktop_app(app: tauri::AppHandle) {
 
 #[tauri::command]
 fn desktop_start_download(
+    app: tauri::AppHandle,
     state: tauri::State<'_, DesktopRuntimeState>,
     source_url: String,
     remote: String,
@@ -1162,6 +1187,8 @@ fn desktop_start_download(
             .map_err(|_| "本地下载会话已损坏".to_string())?;
         sessions.insert(transfer_id.clone(), Arc::clone(&handle));
     }
+
+    spawn_progress_emitter(app, transfer_id.clone(), Arc::clone(&handle));
 
     Ok(DesktopDownloadSession {
         transfer_id,
@@ -1218,6 +1245,7 @@ async fn desktop_prepare_preview_file(
 
 #[tauri::command]
 fn desktop_start_preview_stream(
+    app: tauri::AppHandle,
     state: tauri::State<'_, DesktopRuntimeState>,
     source_url: String,
     remote: String,
@@ -1264,6 +1292,8 @@ fn desktop_start_preview_stream(
     }
 
     let status = snapshot_transfer_status(&transfer_id, &handle)?;
+
+    spawn_progress_emitter(app, transfer_id.clone(), Arc::clone(&handle));
 
     Ok(DesktopPreviewSession {
         transfer_id: transfer_id.clone(),

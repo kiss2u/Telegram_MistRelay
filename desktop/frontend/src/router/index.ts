@@ -26,8 +26,7 @@ const routes: RouteRecordRaw[] = [
   },
   {
     path: '/tasks',
-    name: 'Tasks',
-    component: () => import('@/views/tasks.vue')
+    redirect: '/downloads?tab=queue'
   },
   {
     path: '/settings',

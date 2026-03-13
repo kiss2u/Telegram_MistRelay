@@ -9,11 +9,21 @@ interface ImportMeta {
   readonly env: ImportMetaEnv
 }
 
+interface TauriEvent<T = unknown> {
+  id: number
+  event: string
+  payload: T
+}
+
 interface Window {
   __TAURI__?: {
     core?: {
       invoke<T = unknown>(command: string, args?: Record<string, unknown>): Promise<T>
       convertFileSrc?(filePath: string, protocol?: string): string
+    }
+    event?: {
+      listen<T = unknown>(event: string, handler: (event: TauriEvent<T>) => void): Promise<() => void>
+      once<T = unknown>(event: string, handler: (event: TauriEvent<T>) => void): Promise<() => void>
     }
   }
   __TAURI_INTERNALS__?: {

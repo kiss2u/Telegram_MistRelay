@@ -115,42 +115,6 @@
         </div>
       </div>
 
-      <div v-if="desktopDownloadList.length > 0" class="desktop-downloads-panel">
-        <div class="desktop-downloads-header">
-          <div>
-            <div class="desktop-downloads-title">本地下载任务</div>
-            <div class="desktop-downloads-subtitle">文件会保存到 Windows 下载目录下的 `MistRelay` 文件夹。</div>
-          </div>
-          <el-button text type="primary" @click="router.push('/local-downloads')">查看全部</el-button>
-        </div>
-        <div class="desktop-downloads-list">
-          <div
-            v-for="task in desktopDownloadList"
-            :key="task.transferId"
-            class="desktop-download-item"
-          >
-            <div class="desktop-download-item-head">
-              <span class="desktop-download-name" :title="task.fileName">{{ task.fileName }}</span>
-              <el-tag :type="getDesktopDownloadTagType(task)" size="small">
-                {{ getDesktopDownloadLabel(task) }}
-              </el-tag>
-            </div>
-            <el-progress
-              :percentage="task.progressPercent"
-              :status="getDesktopDownloadProgressStatus(task)"
-              :indeterminate="!task.totalBytes && task.state !== 'completed' && task.state !== 'error'"
-              :duration="2"
-              :stroke-width="8"
-            />
-            <div class="desktop-download-meta">
-              <span>{{ formatDesktopDownloadMeta(task) }}</span>
-              <span v-if="task.state === 'completed'">{{ task.localPath }}</span>
-              <span v-else-if="task.error">{{ task.error }}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
       <div class="tg-drive-shell" v-loading="loading">
         <aside class="tg-filter-rail">
           <button
@@ -456,7 +420,6 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { HomeFilled, Document, Folder, Search, List, Grid, Picture, VideoPlay, Sort, Download, Delete, RefreshRight } from '@element-plus/icons-vue'
 import { getRcloneRemotes, browseDrive, getThumbnail, deleteFile, getDriveUsage, type RcloneRemote, type DriveItem, type DriveUsageResponse } from '@/api'
@@ -471,14 +434,8 @@ import {
 import { useDesktopDownloads } from '@/composables/useDesktopDownloads'
 import { buildAuthorizedApiUrl } from '@/utils/runtime'
 
-const router = useRouter()
 const {
   downloadingPaths,
-  desktopDownloadList,
-  getDesktopDownloadLabel,
-  getDesktopDownloadTagType,
-  getDesktopDownloadProgressStatus,
-  formatDesktopDownloadMeta,
   startTrackedDesktopDownload,
 } = useDesktopDownloads()
 
@@ -1657,75 +1614,6 @@ watch(paginatedItems, () => {
   margin-top: 20px;
 }
 
-.desktop-downloads-panel {
-  margin-bottom: 16px;
-  padding: 18px 20px;
-  border-radius: 16px;
-  background: linear-gradient(180deg, #f8fafc 0%, #eef6ff 100%);
-  border: 1px solid #dbeafe;
-}
-
-.desktop-downloads-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 14px;
-}
-
-.desktop-downloads-title {
-  font-size: 16px;
-  font-weight: 700;
-  color: #0f172a;
-}
-
-.desktop-downloads-subtitle {
-  margin-top: 4px;
-  font-size: 12px;
-  color: #64748b;
-}
-
-.desktop-downloads-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.desktop-download-item {
-  padding: 14px 16px;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.85);
-  border: 1px solid #dbeafe;
-}
-
-.desktop-download-item-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 10px;
-}
-
-.desktop-download-name {
-  font-size: 14px;
-  font-weight: 600;
-  color: #0f172a;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.desktop-download-meta {
-  margin-top: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  font-size: 12px;
-  color: #64748b;
-  word-break: break-all;
-}
-
 /* 网格视图样式 */
 .grid-view {
   display: grid;
@@ -1911,8 +1799,7 @@ watch(paginatedItems, () => {
   }
 
   .tg-stream-header,
-  .tg-file-row,
-  .desktop-download-meta {
+  .tg-file-row {
     display: flex;
     flex-direction: column;
     align-items: stretch;

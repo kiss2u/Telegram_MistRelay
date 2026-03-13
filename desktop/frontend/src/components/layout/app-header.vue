@@ -109,7 +109,6 @@ onUnmounted(() => {
 const breadcrumb = computed(() => {
   const routeMap: Record<string, string> = {
     '/downloads': '下载管理',
-    '/tasks': '任务队列',
     '/settings': '系统设置',
     '/system': '系统管理',
     '/drive': '网盘管理',

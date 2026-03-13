@@ -31,11 +31,6 @@
         <template #title>任务中心</template>
       </el-menu-item>
       
-      <el-menu-item index="/tasks" class="menu-item">
-        <el-icon><List /></el-icon>
-        <template #title>任务队列</template>
-      </el-menu-item>
-      
       <el-menu-item index="/drive" class="menu-item">
         <el-icon><Folder /></el-icon>
         <template #title>我的网盘</template>
@@ -76,7 +71,6 @@ import {
   Cpu,
   Odometer,
   Download,
-  List,
   Folder,
   FolderOpened,
   Setting,

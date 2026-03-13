@@ -1,42 +1,23 @@
 <template>
   <div class="settings-page">
     <div class="page-header">
-      <div class="page-copy">
-        <div class="page-title">设置中心</div>
-        <div class="page-subtitle">
-          {{ scopeDescription }}
-        </div>
-      </div>
+      <div class="page-title">设置中心</div>
       <el-radio-group v-model="settingsScope" size="large" class="scope-switch">
         <el-radio-button label="client">客户端设置</el-radio-button>
         <el-radio-button label="server">服务端设置</el-radio-button>
       </el-radio-group>
     </div>
 
-    <el-card shadow="never" class="scope-summary">
-      <div class="scope-summary__header">
-        <div>
-          <div class="scope-summary__title">{{ scopeTitle }}</div>
-          <div class="scope-summary__desc">{{ scopeSummary }}</div>
-        </div>
-        <el-tag :type="settingsScope === 'client' ? 'success' : 'warning'" size="large">
-          {{ settingsScope === 'client' ? '仅当前客户端生效' : '保存到服务器' }}
-        </el-tag>
-      </div>
-    </el-card>
-
     <div v-if="settingsScope === 'client'" class="scope-panel">
-      <el-alert
-        title="这些设置只保存在当前桌面客户端，用于连接、更新和代理控制，不会修改服务器配置。"
-        type="info"
-        :closable="false"
-      />
-
-      <el-card shadow="hover">
-        <div class="card-header">
-          <div>
-            <div class="section-shortcut__title">本地下载设置已独立</div>
-            <div class="section-shortcut__desc">下载目录、下载并发和线程数已移到“本地下载”页面统一管理，避免和设置中心重复。</div>
+      <el-card shadow="never" class="client-overview">
+        <div class="client-overview__content">
+          <div class="client-overview__text">
+            <div class="client-overview__main">
+              仅当前客户端生效。这里只管理这台电脑上的连接地址、更新和代理，不会修改服务器配置。
+            </div>
+            <div class="client-overview__sub">
+              下载目录、下载并发和线程数已移到“本地下载”页面统一管理。
+            </div>
           </div>
           <el-button type="primary" @click="router.push('/local-downloads')">打开本地下载</el-button>
         </div>
@@ -45,24 +26,21 @@
       <el-tabs v-model="activeClientTab" type="border-card">
         <el-tab-pane label="连接" name="connection">
           <el-card shadow="hover">
-            <template #header>
-              <div class="card-header">
-                <span>客户端连接配置</span>
-                <div class="card-actions">
-                  <el-button @click="testConnection" :loading="testingConnection">
-                    测试连接
-                  </el-button>
-                  <el-button type="primary" @click="saveClientConnection" :loading="savingClientConnection">
-                    保存并应用
-                  </el-button>
-                </div>
+            <div class="panel-toolbar">
+              <div class="panel-toolbar__hint">
+                配置这台电脑连接的服务端地址，不会修改服务器本身的运行参数。
               </div>
-            </template>
+              <div class="card-actions">
+                <el-button @click="testConnection" :loading="testingConnection">
+                  测试连接
+                </el-button>
+                <el-button type="primary" @click="saveClientConnection" :loading="savingClientConnection">
+                  保存并应用
+                </el-button>
+              </div>
+            </div>
 
             <el-form label-width="180px">
-              <el-form-item label="客户端类型">
-                <el-tag type="success">桌面客户端</el-tag>
-              </el-form-item>
               <el-form-item label="服务器地址">
                 <el-input
                   v-model="clientServerUrl"
@@ -92,37 +70,29 @@
 
         <el-tab-pane label="更新" name="update">
           <el-card shadow="hover">
-            <template #header>
-              <div class="card-header">
-                <span>客户端更新</span>
-                <div class="card-actions">
-                  <el-button @click="handleCheckUpdate" :loading="checkingUpdate" :disabled="installingUpdate">
-                    检查更新
-                  </el-button>
-                  <el-button
-                    v-if="updateAvailable"
-                    type="primary"
-                    @click="handleInstallUpdate"
-                    :loading="installingUpdate"
-                  >
-                    更新到 v{{ updateVersion }}
-                  </el-button>
-                </div>
+            <div class="panel-toolbar">
+              <div class="panel-toolbar__hint">
+                这里只管理当前桌面客户端版本，不影响服务器升级和发布流程。
               </div>
-            </template>
-
-            <el-alert
-              title="这里只管理本地客户端版本。服务器升级、镜像更新和后台发布流程不受这里影响。"
-              type="success"
-              :closable="false"
-              style="margin-bottom: 20px"
-            />
+              <div class="card-actions">
+                <el-button @click="handleCheckUpdate" :loading="checkingUpdate" :disabled="installingUpdate">
+                  检查更新
+                </el-button>
+                <el-button
+                  v-if="updateAvailable"
+                  type="primary"
+                  @click="handleInstallUpdate"
+                  :loading="installingUpdate"
+                >
+                  更新到 v{{ updateVersion }}
+                </el-button>
+              </div>
+            </div>
 
             <el-form label-width="180px">
               <el-form-item label="当前版本">
                 <div class="version-row">
                   <el-tag type="info">v{{ appVersion }}</el-tag>
-                  <span class="connection-status-text">当前安装在这台电脑上的客户端版本</span>
                 </div>
               </el-form-item>
               <el-form-item v-if="updateStatusText" label="更新状态">
@@ -143,29 +113,22 @@
 
         <el-tab-pane label="代理" name="proxy">
           <el-card shadow="hover">
-            <template #header>
-              <div class="card-header">
-                <span>桌面代理</span>
-                <div class="card-actions">
-                  <el-button @click="loadDesktopProxyConfig" :loading="loadingDesktopProxyConfig">
-                    重新读取
-                  </el-button>
-                  <el-button type="primary" @click="saveDesktopProxyConfig" :loading="savingDesktopProxyConfig">
-                    保存代理配置
-                  </el-button>
-                  <el-button type="warning" @click="restartDesktopClient" :loading="restartingDesktopClient">
-                    立即重启客户端
-                  </el-button>
-                </div>
+            <div class="panel-toolbar">
+              <div class="panel-toolbar__hint">
+                启用后，PC 客户端所有网络流量都会走代理；保存后需要重启客户端。
               </div>
-            </template>
-
-            <el-alert
-              title="桌面代理会作为 PC 客户端的全局代理，覆盖页面请求、接口访问、更新检查、桌面下载和本地预览等客户端侧流量，不影响服务器端任务执行。保存后需要重启客户端。"
-              type="warning"
-              :closable="false"
-              style="margin-bottom: 20px"
-            />
+              <div class="card-actions">
+                <el-button @click="loadDesktopProxyConfig" :loading="loadingDesktopProxyConfig">
+                  重新读取
+                </el-button>
+                <el-button type="primary" @click="saveDesktopProxyConfig" :loading="savingDesktopProxyConfig">
+                  保存代理配置
+                </el-button>
+                <el-button type="warning" @click="restartDesktopClient" :loading="restartingDesktopClient">
+                  立即重启客户端
+                </el-button>
+              </div>
+            </div>
 
             <el-form label-width="180px">
               <el-form-item label="启用桌面代理">
@@ -200,11 +163,9 @@
 
     <div v-else class="scope-panel">
       <div class="section-toolbar">
-        <el-alert
-          title="这些配置会写入服务器，影响所有客户端、下载任务、上传链路和直链服务。"
-          type="warning"
-          :closable="false"
-        />
+        <div class="section-toolbar__summary">
+          这里修改的是服务端配置，会影响所有客户端、下载任务、上传链路和直链服务。
+        </div>
         <div class="section-toolbar__actions">
           <el-button type="info" @click="handleReloadConfig" :loading="reloading" :disabled="reloading">
             从 config.yml 重新导入
@@ -218,26 +179,14 @@
       <el-tabs v-model="activeServerTab" type="border-card">
         <el-tab-pane label="Telegram配置" name="telegram">
           <el-card shadow="hover">
-            <template #header>
-              <div class="card-header">
-                <span>Telegram Bot配置</span>
-                <el-button type="primary" @click="saveConfig('telegram')" :loading="saving" :disabled="reloading">
-                  保存配置
-                </el-button>
+            <div class="panel-toolbar">
+              <div class="panel-toolbar__hint">
+                API ID、API Hash、Bot Token 和管理员 ID 修改后需要重启服务，其它项会在后续任务中读取新配置。
               </div>
-            </template>
-            <el-alert
-              type="warning"
-              :closable="false"
-              style="margin-bottom: 20px"
-            >
-              <template #title>
-                <div style="font-size: 13px">
-                  <strong>注意：</strong>修改 API ID、API Hash、Bot Token 或管理员ID 后需要重启服务才能生效。
-                  <br />其他配置（如上传到Telegram）保存后会在下次使用时自动从数据库读取最新配置。
-                </div>
-              </template>
-            </el-alert>
+              <el-button type="primary" @click="saveConfig('telegram')" :loading="saving" :disabled="reloading">
+                保存配置
+              </el-button>
+            </div>
             <el-form :model="configs.telegram" label-width="180px" :rules="rules" :disabled="reloading">
               <el-form-item label="API ID" prop="API_ID">
                 <el-input-number v-model="configs.telegram.API_ID" :min="0" style="width: 100%" />
@@ -263,25 +212,14 @@
 
         <el-tab-pane label="Rclone配置" name="rclone">
           <el-card shadow="hover">
-            <template #header>
-              <div class="card-header">
-                <span>Rclone上传配置</span>
-                <el-button type="primary" @click="saveConfig('rclone')" :loading="saving">
-                  保存配置
-                </el-button>
+            <div class="panel-toolbar">
+              <div class="panel-toolbar__hint">
+                Rclone 配置保存后会立即生效，下次上传时直接读取最新配置，无需重启服务。
               </div>
-            </template>
-            <el-alert
-              type="info"
-              :closable="false"
-              style="margin-bottom: 20px"
-            >
-              <template #title>
-                <div style="font-size: 13px">
-                  <strong>提示：</strong>Rclone配置保存后会立即生效，下次上传时会自动从数据库读取最新配置，无需重启服务。
-                </div>
-              </template>
-            </el-alert>
+              <el-button type="primary" @click="saveConfig('rclone')" :loading="saving">
+                保存配置
+              </el-button>
+            </div>
             <el-form :model="configs.rclone" label-width="180px">
               <el-divider content-position="left">OneDrive配置</el-divider>
               <el-form-item label="启用OneDrive上传">
@@ -316,19 +254,10 @@
               <el-form-item label="启用Google Drive上传">
                 <el-switch v-model="configs.rclone.UP_GOOGLE_DRIVE" />
               </el-form-item>
-              <el-alert
-                v-if="configs.rclone.UP_GOOGLE_DRIVE"
-                type="info"
-                :closable="false"
-                style="margin-bottom: 20px"
-              >
-                <template #title>
-                  <div style="font-size: 13px">
-                    <strong>提示：</strong>Google Drive 上传使用 rclone，需要在 rclone 配置文件中配置 OAuth2 token。
-                    <br />请确保已在 <code>rclone.conf</code> 中配置了名为 <code>{{ configs.rclone.GOOGLE_DRIVE_REMOTE || 'gdrive' }}</code> 的远程配置。
-                  </div>
-                </template>
-              </el-alert>
+              <div v-if="configs.rclone.UP_GOOGLE_DRIVE" class="inline-note">
+                Google Drive 上传依赖 rclone OAuth2 token，请确认 <code>rclone.conf</code> 中存在
+                <code>{{ configs.rclone.GOOGLE_DRIVE_REMOTE || 'gdrive' }}</code> 这个 remote。
+              </div>
               <el-form-item label="Google Drive远程名称" v-if="configs.rclone.UP_GOOGLE_DRIVE">
                 <el-select
                   v-model="configs.rclone.GOOGLE_DRIVE_REMOTE"
@@ -361,17 +290,9 @@
               </el-form-item>
 
               <el-divider content-position="left">Rclone 配置文件管理</el-divider>
-              <el-alert
-                type="info"
-                :closable="false"
-                style="margin-bottom: 20px"
-              >
-                <template #title>
-                  <div style="font-size: 13px">
-                    <strong>提示:</strong>直接编辑 rclone.conf 文件内容,保存时会自动备份原文件。配置采用 INI 格式,每个远程存储以 <code>[remote_name]</code> 开始。
-                  </div>
-                </template>
-              </el-alert>
+              <div class="inline-note">
+                这里直接编辑 <code>rclone.conf</code>；保存时会自动备份原文件，配置采用 INI 格式，每个远程存储以 <code>[remote_name]</code> 开始。
+              </div>
               <el-form-item label="配置文件路径">
                 <el-input v-model="rcloneConfigPath" readonly />
               </el-form-item>
@@ -409,25 +330,14 @@
 
         <el-tab-pane label="下载配置" name="download">
           <el-card shadow="hover">
-            <template #header>
-              <div class="card-header">
-                <span>下载设置</span>
-                <el-button type="primary" @click="saveConfig('download')" :loading="saving">
-                  保存配置
-                </el-button>
+            <div class="panel-toolbar">
+              <div class="panel-toolbar__hint">
+                服务端下载配置保存后立即生效，后续下载任务会直接读取最新参数。
               </div>
-            </template>
-            <el-alert
-              type="info"
-              :closable="false"
-              style="margin-bottom: 20px"
-            >
-              <template #title>
-                <div style="font-size: 13px">
-                  <strong>提示：</strong>下载配置保存后会立即生效，下次下载时会自动从数据库读取最新配置，无需重启服务。
-                </div>
-              </template>
-            </el-alert>
+              <el-button type="primary" @click="saveConfig('download')" :loading="saving">
+                保存配置
+              </el-button>
+            </div>
             <el-form :model="configs.download" label-width="180px" :disabled="reloading">
               <el-form-item label="保存路径">
                 <el-input v-model="configs.download.SAVE_PATH" />
@@ -465,25 +375,14 @@
 
         <el-tab-pane label="Aria2配置" name="aria2">
           <el-card shadow="hover">
-            <template #header>
-              <div class="card-header">
-                <span>Aria2 RPC配置</span>
-                <el-button type="primary" @click="saveConfig('aria2')" :loading="saving">
-                  保存配置
-                </el-button>
+            <div class="panel-toolbar">
+              <div class="panel-toolbar__hint">
+                Aria2 配置保存后立即生效，下次连接时会直接读取最新配置。
               </div>
-            </template>
-            <el-alert
-              type="info"
-              :closable="false"
-              style="margin-bottom: 20px"
-            >
-              <template #title>
-                <div style="font-size: 13px">
-                  <strong>提示：</strong>Aria2配置保存后会立即生效，下次连接时会自动从数据库读取最新配置，无需重启服务。
-                </div>
-              </template>
-            </el-alert>
+              <el-button type="primary" @click="saveConfig('aria2')" :loading="saving">
+                保存配置
+              </el-button>
+            </div>
             <el-form :model="configs.aria2" label-width="180px">
               <el-form-item label="RPC密钥">
                 <el-input v-model="configs.aria2.RPC_SECRET" type="password" show-password />
@@ -497,14 +396,14 @@
 
         <el-tab-pane label="直链功能" name="stream">
           <el-card shadow="hover">
-            <template #header>
-              <div class="card-header">
-                <span>直链功能配置</span>
-                <el-button type="primary" @click="saveConfig('stream')" :loading="saving">
-                  保存配置
-                </el-button>
+            <div class="panel-toolbar">
+              <div class="panel-toolbar__hint">
+                这里控制直链服务行为，保存后后续直链请求会按新配置运行。
               </div>
-            </template>
+              <el-button type="primary" @click="saveConfig('stream')" :loading="saving">
+                保存配置
+              </el-button>
+            </div>
             <el-form :model="configs.stream" label-width="180px">
               <el-form-item label="启用直链功能">
                 <el-switch v-model="configs.stream.ENABLE_STREAM" />
@@ -634,20 +533,6 @@ const rcloneConfigLastSaved = ref('')
 const availableRemotes = ref<RcloneRemote[]>([])
 const configCategories = ['telegram', 'rclone', 'download', 'aria2', 'stream'] as const
 type ConfigCategory = typeof configCategories[number]
-
-const scopeTitle = computed(() => (
-  settingsScope.value === 'client' ? '客户端本地设置' : '服务端运行设置'
-))
-const scopeSummary = computed(() => (
-  settingsScope.value === 'client'
-    ? '当前页面仅管理这台电脑上的连接地址、更新和代理能力。'
-    : '当前页面会直接修改服务器配置，所有桌面端和 Web 端都会受到影响。'
-))
-const scopeDescription = computed(() => (
-  settingsScope.value === 'client'
-    ? '本地客户端设置和服务端配置已经拆分显示，避免混淆。'
-    : '正在编辑服务端配置，保存后会影响整个 MistRelay 服务。'
-))
 
 const effectiveServerUrlLabel = computed(() => clientServerUrl.value || '同源 /api')
 const connectionStatusLabel = computed(() => {
@@ -1168,44 +1053,44 @@ onMounted(() => {
   @apply flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between;
 }
 
-.page-copy {
-  @apply space-y-1;
-}
-
 .page-title {
   @apply text-3xl font-bold text-gray-800;
-}
-
-.page-subtitle {
-  @apply text-gray-600;
 }
 
 .scope-switch {
   @apply self-start lg:self-auto;
 }
 
-.scope-summary {
-  @apply border-0 bg-slate-50;
-}
-
-.scope-summary__header {
-  @apply flex flex-col gap-4 md:flex-row md:items-center md:justify-between;
-}
-
-.scope-summary__title {
-  @apply text-lg font-semibold text-slate-900;
-}
-
-.scope-summary__desc {
-  @apply mt-1 text-sm text-slate-600;
-}
-
 .scope-panel {
   @apply space-y-4;
 }
 
+.client-overview {
+  @apply border border-slate-200 bg-slate-50;
+}
+
+.client-overview__content {
+  @apply flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between;
+}
+
+.client-overview__text {
+  @apply space-y-1;
+}
+
+.client-overview__main {
+  @apply text-sm font-medium text-slate-900;
+}
+
+.client-overview__sub {
+  @apply text-sm text-slate-600;
+}
+
 .section-toolbar {
   @apply flex flex-col gap-4 rounded-2xl border border-amber-200 bg-amber-50 p-4;
+}
+
+.section-toolbar__summary {
+  @apply text-sm font-medium text-amber-900;
 }
 
 .section-toolbar__actions {
@@ -1216,20 +1101,16 @@ onMounted(() => {
   @apply text-xs text-amber-800;
 }
 
-.card-header {
-  @apply flex items-center justify-between;
-}
-
 .card-actions {
   @apply flex items-center gap-3 flex-wrap;
 }
 
-.section-shortcut__title {
-  @apply text-base font-semibold text-slate-900;
+.panel-toolbar {
+  @apply mb-5 flex flex-col gap-3 border-b border-slate-100 pb-4 lg:flex-row lg:items-center lg:justify-between;
 }
 
-.section-shortcut__desc {
-  @apply mt-1 text-sm text-slate-600;
+.panel-toolbar__hint {
+  @apply text-sm text-slate-600;
 }
 
 .connection-status {
@@ -1246,6 +1127,10 @@ onMounted(() => {
 
 .release-notes {
   @apply rounded-xl bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-600 whitespace-pre-wrap;
+}
+
+.inline-note {
+  @apply mb-5 rounded-xl bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-600;
 }
 
 .quick-actions {

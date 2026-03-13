@@ -1,41 +1,60 @@
 <template>
   <div class="tasks-center-page">
-    <el-card shadow="hover">
+    <el-card shadow="hover" class="tasks-page-shell">
       <template #header>
-        <div class="flex justify-between items-center">
-          <span class="text-xl font-semibold">任务中心</span>
-          <div class="flex gap-4 items-center">
-            <el-select v-model="limit" @change="handleLimitChange" style="width: 150px">
-              <el-option label="显示 50 条" :value="50" />
-              <el-option label="显示 100 条" :value="100" />
-              <el-option label="显示 200 条" :value="200" />
-              <el-option label="显示 500 条" :value="500" />
-            </el-select>
-            <el-button @click="handleRefresh" :icon="Refresh" type="primary" size="small">
-              刷新
-            </el-button>
-            <el-button @click="handleDeleteAll" :icon="Delete" type="danger" size="small">
-              删除所有记录
-            </el-button>
+        <div class="flex justify-between items-center gap-4 flex-wrap">
+          <div>
+            <span class="text-xl font-semibold">任务中心</span>
+            <div class="page-subtitle">任务中心和任务队列已合并到同一页，通过标签切换。</div>
           </div>
         </div>
       </template>
-      
-      <el-skeleton v-if="isLoading" :rows="10" animated />
-      
-      <el-alert
-        v-else-if="error"
-        :title="`加载失败: ${error}`"
-        type="error"
-        :closable="false"
-      >
-        <template #default>
-          <el-button @click="handleRefresh" type="primary" class="mt-2">重试</el-button>
-        </template>
-      </el-alert>
-      
-      <div v-else-if="groups && groups.length > 0" class="tasks-tabs-container">
-        <el-tabs v-model="activeTab" class="tasks-tabs">
+
+      <el-tabs v-model="pageTab" class="page-tabs" @tab-change="handlePageTabChange">
+        <el-tab-pane name="center">
+          <template #label>
+            <span class="flex items-center gap-2">
+              <el-icon><Download /></el-icon>
+              任务中心
+            </span>
+          </template>
+
+          <el-card shadow="hover">
+            <template #header>
+              <div class="flex justify-between items-center gap-4 flex-wrap">
+                <span class="text-xl font-semibold">任务中心</span>
+                <div class="flex gap-4 items-center">
+                  <el-select v-model="limit" @change="handleLimitChange" style="width: 150px">
+                    <el-option label="显示 50 条" :value="50" />
+                    <el-option label="显示 100 条" :value="100" />
+                    <el-option label="显示 200 条" :value="200" />
+                    <el-option label="显示 500 条" :value="500" />
+                  </el-select>
+                  <el-button @click="handleRefresh" :icon="Refresh" type="primary" size="small">
+                    刷新
+                  </el-button>
+                  <el-button @click="handleDeleteAll" :icon="Delete" type="danger" size="small">
+                    删除所有记录
+                  </el-button>
+                </div>
+              </div>
+            </template>
+
+            <el-skeleton v-if="isLoading" :rows="10" animated />
+
+            <el-alert
+              v-else-if="error"
+              :title="`加载失败: ${error}`"
+              type="error"
+              :closable="false"
+            >
+              <template #default>
+                <el-button @click="handleRefresh" type="primary" class="mt-2">重试</el-button>
+              </template>
+            </el-alert>
+
+            <div v-else-if="groups && groups.length > 0" class="tasks-tabs-container">
+              <el-tabs v-model="taskCenterTab" class="tasks-tabs">
           <!-- 下载标签页 -->
           <el-tab-pane name="download">
             <template #label>
@@ -355,15 +374,15 @@
                             @click.stop="handleRetry(row)"
                             title="重试"
                           />
-                          <el-button
-                            size="small"
-                            type="danger"
-                            :icon="Delete"
-                            :loading="operationLoading"
-                            @click.stop="handleDelete(row, activeTab === 'records')"
-                            title="删除"
-                          />
-                        </el-button-group>
+                      <el-button
+                        size="small"
+                        type="danger"
+                        :icon="Delete"
+                        :loading="operationLoading"
+                        @click.stop="handleDelete(row, taskCenterTab === 'records')"
+                        title="删除"
+                      />
+                    </el-button-group>
                       </template>
                     </el-table-column>
                   </el-table>
@@ -371,10 +390,24 @@
               </el-collapse-item>
             </el-collapse>
           </el-tab-pane>
-        </el-tabs>
-      </div>
-      
-      <el-empty v-else-if="!isLoading && !error && (!groups || groups.length === 0)" description="暂无任务记录" />
+              </el-tabs>
+            </div>
+
+            <el-empty v-else-if="!isLoading && !error && (!groups || groups.length === 0)" description="暂无任务记录" />
+          </el-card>
+        </el-tab-pane>
+
+        <el-tab-pane name="queue">
+          <template #label>
+            <span class="flex items-center gap-2">
+              <el-icon><List /></el-icon>
+              任务队列
+            </span>
+          </template>
+
+          <TasksView />
+        </el-tab-pane>
+      </el-tabs>
     </el-card>
     
     <!-- 文件详情对话框 -->
@@ -511,10 +544,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Files, Document, Delete, InfoFilled, Download, Upload, Link, RefreshRight } from '@element-plus/icons-vue'
+import { List } from '@element-plus/icons-vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useIntervalFn } from '@vueuse/core'
+import TasksView from '@/views/tasks.vue'
 import { 
   getDownloads, 
   deleteAllDownloads, 
@@ -535,6 +571,9 @@ import {
   getStatusText,
   getStatusTagType
 } from '@/utils/formatters'
+
+const route = useRoute()
+const router = useRouter()
 
 // 扩展状态文本和标签类型函数，支持跳过状态
 function getStatusTextWithSkip(status?: string, errorMessage?: string): string {
@@ -689,7 +728,8 @@ const isLoading = ref(true)
 const error = ref<string | null>(null)
 const limit = ref(100)
 const activeGroups = ref<string[]>([])
-const activeTab = ref<'download' | 'upload' | 'records'>('download') // 默认显示"下载"标签页
+const pageTab = ref<'center' | 'queue'>('center')
+const taskCenterTab = ref<'download' | 'upload' | 'records'>('download')
 const detailDialogVisible = ref(false)
 const selectedRecord = ref<DownloadRecord | null>(null)
 const autoDeleteAfterUpload = ref<boolean>(true) // 默认启用自动清理
@@ -743,8 +783,23 @@ const activeDownloads = computed<ActiveDownloadRow[]>(() => {
 })
 
 function openGroupForActiveRow(row: ActiveDownloadRow) {
-  activeTab.value = 'records'
+  taskCenterTab.value = 'records'
   activeGroups.value = [row.group_key]
+}
+
+function syncPageTabFromRoute() {
+  pageTab.value = route.query.tab === 'queue' ? 'queue' : 'center'
+}
+
+function handlePageTabChange(name: string | number) {
+  const nextTab = name === 'queue' ? 'queue' : 'center'
+  const nextQuery = { ...route.query }
+  if (nextTab === 'queue') {
+    nextQuery.tab = 'queue'
+  } else {
+    delete nextQuery.tab
+  }
+  router.replace({ path: '/downloads', query: nextQuery })
 }
 
 // 稳定的排序函数（上传）
@@ -1116,6 +1171,7 @@ onUnmounted(() => {
 })
 
 onMounted(() => {
+  syncPageTabFromRoute()
   // 获取配置，特别是 AUTO_DELETE_AFTER_UPLOAD
   getConfig('rclone')
     .then(response => {
@@ -1197,6 +1253,8 @@ onMounted(() => {
     checkConnectionAndPoll()
   }, 1000)
 })
+
+watch(() => route.query.tab, syncPageTabFromRoute, { immediate: true })
 
 // 从 WebSocket 更新下载记录
 function updateDownloadFromWS(data: any) {
