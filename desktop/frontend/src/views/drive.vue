@@ -76,18 +76,18 @@
 
       <div class="drive-topbar">
         <div class="drive-controls">
-          <div v-if="!isTelegramMode" class="drive-breadcrumb-card">
+          <div class="drive-breadcrumb-card">
             <el-breadcrumb separator="/">
               <el-breadcrumb-item @click="navigateToPath('/')">
                 <el-icon><HomeFilled /></el-icon>
-                根目录
+                {{ isTelegramMode ? 'Telegram 频道' : '根目录' }}
               </el-breadcrumb-item>
               <el-breadcrumb-item
-                v-for="(segment, index) in pathSegments"
-                :key="index"
-                @click="navigateToSegment(index)"
+                v-for="segment in breadcrumbSegments"
+                :key="segment.path"
+                @click="navigateToPath(segment.path)"
               >
-                {{ segment }}
+                {{ segment.label }}
               </el-breadcrumb-item>
             </el-breadcrumb>
           </div>
@@ -151,7 +151,7 @@
             <div>
               <div class="tg-stream-title">文件流</div>
               <div class="tg-stream-subtitle">
-                {{ isTelegramMode ? 'Telegram 频道' : (currentRemote || '未选择存储') }} · {{ quickFilterOptions.find(item => item.key === currentFilter)?.label || '全部' }} · {{ isTelegramMode ? telegramTotal : filteredItems.length }} 项
+                {{ isTelegramMode ? 'Telegram 频道' : (currentRemote || '未选择存储') }} · {{ quickFilterOptions.find(item => item.key === currentFilter)?.label || '全部' }} · {{ visibleItemCount }} 项
               </div>
             </div>
             <el-tag round effect="plain">
@@ -202,8 +202,8 @@
                 <div class="tg-file-meta">
                   {{ getItemMetaLine(item) }}
                 </div>
-                <div class="tg-file-path" :title="isTelegramMode ? (telegramItemMeta[item.path]?.caption || '') : item.path">
-                  {{ isTelegramMode ? (telegramItemMeta[item.path]?.caption || '') : item.path }}
+                <div class="tg-file-path" :title="getItemPathHint(item)">
+                  {{ getItemPathHint(item) }}
                 </div>
               </div>
 
@@ -211,7 +211,7 @@
                 <div class="tg-file-date">{{ formatDate(item.modTime) }}</div>
                 <div class="tg-file-actions">
                   <el-button link type="primary" @click.stop="handleRowClick(item)">
-                    {{ item.isDir && !isTelegramMode ? '进入' : '打开' }}
+                    {{ item.isDir ? '进入' : '打开' }}
                   </el-button>
                   <el-button
                     v-if="!item.isDir"
@@ -350,7 +350,7 @@
           </div>
 
           <div class="tg-inspector-meta">
-            <template v-if="isTelegramMode && telegramItemMeta[selectedItem.path]">
+            <template v-if="isTelegramMode && !selectedItem.isDir && telegramItemMeta[selectedItem.path]">
               <div v-if="telegramItemMeta[selectedItem.path].caption" class="tg-inspector-meta-row tg-caption-row">
                 <span>说明</span>
                 <span>{{ telegramItemMeta[selectedItem.path].caption }}</span>
@@ -362,6 +362,16 @@
               <div v-if="telegramItemMeta[selectedItem.path].duration" class="tg-inspector-meta-row">
                 <span>时长</span>
                 <span>{{ Math.floor(telegramItemMeta[selectedItem.path].duration! / 60) }}:{{ String(telegramItemMeta[selectedItem.path].duration! % 60).padStart(2, '0') }}</span>
+              </div>
+            </template>
+            <template v-if="isTelegramMode && selectedItem.isDir && telegramGroupMeta[selectedItem.path]">
+              <div class="tg-inspector-meta-row">
+                <span>媒体组</span>
+                <span>{{ telegramGroupMeta[selectedItem.path].count }} 个文件</span>
+              </div>
+              <div class="tg-inspector-meta-row">
+                <span>组大小</span>
+                <span>{{ formatBytes(telegramGroupMeta[selectedItem.path].size) }}</span>
               </div>
             </template>
             <div v-if="!isTelegramMode" class="tg-inspector-meta-row">
@@ -385,19 +395,19 @@
       </div>
 
       <!-- 分页 -->
-      <div class="pagination-container">
+      <div v-if="!isTelegramMode || !currentTelegramGroupId" class="pagination-container">
         <el-pagination
           v-model:current-page="currentPage"
           v-model:page-size="pageSize"
           :page-sizes="[20, 50, 100, 200]"
-          :total="isTelegramMode ? telegramTotal : filteredItems.length"
+          :total="paginationTotal"
           layout="total, sizes, prev, pager, next, jumper"
           background
         />
       </div>
 
       <!-- 空状态 -->
-      <el-empty v-if="!loading && items.length === 0" description="此目录为空" />
+      <el-empty v-if="!loading && visibleItemCount === 0" description="此目录为空" />
     </el-card>
 
     <!-- 图片预览 -->
@@ -483,14 +493,25 @@ interface TelegramItemMeta {
   duration: number | null
   messageId: number
   supportsStreaming: boolean
+  mediaGroupId: string | null
+}
+
+interface TelegramGroupMeta {
+  id: string
+  title: string
+  count: number
+  size: number
+  modTime?: string
 }
 
 const telegramItemMeta = ref<Record<string, TelegramItemMeta>>({})
+const telegramGroupMeta = ref<Record<string, TelegramGroupMeta>>({})
 const telegramTotal = ref(0)
 const telegramUsage = ref<TelegramUsageStats | null>(null)
 const loadingTelegramUsage = ref(false)
 
 const isTelegramMode = computed(() => currentRemote.value === TELEGRAM_REMOTE_NAME)
+const TELEGRAM_GROUP_PATH_PREFIX = '/__tg_group__/'
 
 const availableRemotes = ref<RcloneRemote[]>([])
 const currentRemote = ref('')
@@ -556,10 +577,30 @@ const usageProgressColor = computed(() => {
 })
 
 // 计算属性
-const pathSegments = computed(() => {
+const currentTelegramGroupId = computed(() => (
+  isTelegramMode.value && currentPath.value.startsWith(TELEGRAM_GROUP_PATH_PREFIX)
+    ? currentPath.value.slice(TELEGRAM_GROUP_PATH_PREFIX.length)
+    : null
+))
+
+const breadcrumbSegments = computed(() => {
+  if (isTelegramMode.value) {
+    const groupId = currentTelegramGroupId.value
+    if (!groupId) return []
+    const groupPath = `${TELEGRAM_GROUP_PATH_PREFIX}${groupId}`
+    return [{
+      path: groupPath,
+      label: telegramGroupMeta.value[groupPath]?.title || '媒体组',
+    }]
+  }
+
   const path = currentPath.value
   if (path === '/') return []
-  return path.split('/').filter(Boolean)
+
+  return path.split('/').filter(Boolean).map((segment, index) => ({
+    path: `/${path.split('/').filter(Boolean).slice(0, index + 1).join('/')}`,
+    label: segment,
+  }))
 })
 
 function matchesQuickFilter(item: DriveItem, filter: QuickFilter): boolean {
@@ -605,8 +646,58 @@ const quickFilterOptions = computed(() => {
   }))
 })
 
+const telegramVisibleItems = computed(() => {
+  if (!isTelegramMode.value) return []
+
+  const groupId = currentTelegramGroupId.value
+  if (groupId) {
+    return items.value.filter(item => telegramItemMeta.value[item.path]?.mediaGroupId === groupId)
+  }
+
+  const grouped = new Map<string, DriveItem[]>()
+  const singles: DriveItem[] = []
+  const nextGroupMeta: Record<string, TelegramGroupMeta> = {}
+
+  for (const item of items.value) {
+    const mediaGroupId = telegramItemMeta.value[item.path]?.mediaGroupId
+    if (!mediaGroupId) {
+      singles.push(item)
+      continue
+    }
+
+    const bucket = grouped.get(mediaGroupId) || []
+    bucket.push(item)
+    grouped.set(mediaGroupId, bucket)
+  }
+
+  const folders = Array.from(grouped.entries()).map(([mediaGroupId, members]) => {
+    const first = members[0]
+    const title = buildTelegramGroupTitle(mediaGroupId, members)
+    const groupPath = `${TELEGRAM_GROUP_PATH_PREFIX}${mediaGroupId}`
+    nextGroupMeta[groupPath] = {
+      id: mediaGroupId,
+      title,
+      count: members.length,
+      size: members.reduce((sum, member) => sum + (member.size || 0), 0),
+      modTime: members[0]?.modTime,
+    }
+
+    return {
+      name: title,
+      path: groupPath,
+      size: nextGroupMeta[groupPath].size,
+      mimeType: '',
+      modTime: first?.modTime,
+      isDir: true,
+    } satisfies DriveItem
+  })
+
+  telegramGroupMeta.value = nextGroupMeta
+  return [...folders, ...singles]
+})
+
 const filteredItems = computed(() => {
-  if (isTelegramMode.value) return items.value
+  if (isTelegramMode.value) return telegramVisibleItems.value
 
   let result = items.value.filter(item => matchesQuickFilter(item, currentFilter.value))
   
@@ -643,11 +734,20 @@ const filteredItems = computed(() => {
 })
 
 const paginatedItems = computed(() => {
-  if (isTelegramMode.value) return items.value
+  if (isTelegramMode.value) return filteredItems.value
   const start = (currentPage.value - 1) * pageSize.value
   const end = start + pageSize.value
   return filteredItems.value.slice(start, end)
 })
+
+const visibleItemCount = computed(() => filteredItems.value.length)
+const paginationTotal = computed(() => (
+  isTelegramMode.value && currentTelegramGroupId.value
+    ? filteredItems.value.length
+    : isTelegramMode.value
+      ? telegramTotal.value
+      : filteredItems.value.length
+))
 
 const selectedItem = computed(() => {
   return paginatedItems.value.find(item => item.path === selectedItemPath.value) || paginatedItems.value[0] || null
@@ -679,10 +779,17 @@ function getVideoType(filename: string | undefined): string {
 }
 
 function getItemTypeLabel(item: DriveItem): string {
-  if (item.isDir) return '文件夹'
+  if (item.isDir) return isTelegramMode.value ? '媒体组' : '文件夹'
   if (isVideo(item.name)) return '视频'
   if (isImage(item.name)) return '图片'
   return '文件'
+}
+
+function buildTelegramGroupTitle(mediaGroupId: string, members: DriveItem[]): string {
+  const first = members[0]
+  const firstMeta = first ? telegramItemMeta.value[first.path] : null
+  const baseTitle = firstMeta?.caption?.trim() || first?.name || `媒体组 ${mediaGroupId.slice(-6)}`
+  return `${baseTitle} · ${members.length} 项`
 }
 
 function formatRelativeTime(dateStr: string | undefined): string {
@@ -710,6 +817,20 @@ function formatRelativeTime(dateStr: string | undefined): string {
 
 function getItemMetaLine(item: DriveItem): string {
   if (item.isDir) {
+    if (isTelegramMode.value) {
+      const group = telegramGroupMeta.value[item.path]
+      const parts = ['媒体组']
+      if (group) {
+        parts.push(`${group.count} 个文件`)
+        if (group.size > 0) {
+          parts.push(formatBytes(group.size))
+        }
+        if (group.modTime) {
+          parts.push(formatRelativeTime(group.modTime))
+        }
+      }
+      return parts.join(' · ')
+    }
     return `${getItemTypeLabel(item)} · ${formatRelativeTime(item.modTime)}`
   }
 
@@ -726,6 +847,19 @@ function getItemMetaLine(item: DriveItem): string {
 
   parts.push(formatRelativeTime(item.modTime))
   return parts.join(' · ')
+}
+
+function getItemPathHint(item: DriveItem): string {
+  if (!isTelegramMode.value) {
+    return item.path
+  }
+
+  if (item.isDir) {
+    const group = telegramGroupMeta.value[item.path]
+    return group ? `${group.count} 个文件` : '媒体组'
+  }
+
+  return telegramItemMeta.value[item.path]?.caption || item.path
 }
 
 function selectItem(item: DriveItem) {
@@ -958,6 +1092,7 @@ function mapTelegramItem(tg: TelegramMediaItem): DriveItem {
     duration: tg.duration,
     messageId: tg.message_id,
     supportsStreaming: !!tg.supports_streaming,
+    mediaGroupId: tg.media_group_id,
   }
   return {
     name: tg.file_name || fallbackName,
@@ -983,6 +1118,9 @@ async function browseTelegramChannel() {
     if (response.success) {
       telegramTotal.value = response.total
       items.value = response.items.map(mapTelegramItem)
+      if (currentTelegramGroupId.value && !items.value.some(item => telegramItemMeta.value[item.path]?.mediaGroupId === currentTelegramGroupId.value)) {
+        currentPath.value = '/'
+      }
       if (!items.value.some(i => i.path === selectedItemPath.value)) {
         selectedItemPath.value = items.value[0]?.path || ''
       }
@@ -1068,9 +1206,7 @@ async function handleDownload(item: DriveItem) {
 
   let url: string
   if (isTelegramMode.value) {
-    const meta = telegramItemMeta.value[item.path]
-    if (!meta) return
-    url = toAbsoluteServerUrl(`/${meta.streamUrl}`)
+    url = getTelegramDirectLink(item)
   } else {
     url = buildAuthorizedApiUrl('/api/rclone/file', {
       remote: currentRemote.value,
@@ -1149,13 +1285,28 @@ const previewProgressText = computed(() => {
 
 function getSourceUrlForItem(row: DriveItem): string {
   if (isTelegramMode.value) {
-    const meta = telegramItemMeta.value[row.path]
-    if (meta) return toAbsoluteServerUrl(`/${meta.streamUrl}`)
+    return getTelegramDirectLink(row)
   }
   return buildAuthorizedApiUrl('/api/rclone/file', {
     remote: currentRemote.value,
     path: row.path,
   })
+}
+
+function getTelegramDirectLink(row: DriveItem): string {
+  const meta = telegramItemMeta.value[row.path]
+  const rawStreamUrl = meta?.streamUrl?.trim()
+
+  if (!rawStreamUrl) {
+    throw new Error('Telegram 直链地址缺失，请刷新列表后重试')
+  }
+
+  if (/^https?:\/\//i.test(rawStreamUrl)) {
+    return rawStreamUrl
+  }
+
+  const normalizedPath = `/${rawStreamUrl.replace(/^\/+/, '')}`
+  return toAbsoluteServerUrl(normalizedPath)
 }
 
 async function preparePreviewSource(row: DriveItem): Promise<string> {
@@ -1274,13 +1425,10 @@ function closePreview() {
 // 导航到路径
 function navigateToPath(path: string) {
   currentPath.value = path || '/'
+  if (isTelegramMode.value) {
+    return
+  }
   browse()
-}
-
-// 导航到面包屑某一段
-function navigateToSegment(index: number) {
-  const segments = pathSegments.value.slice(0, index + 1)
-  navigateToPath('/' + segments.join('/'))
 }
 
 // 格式化文件大小
@@ -1335,7 +1483,7 @@ watch([currentFilter, searchKeyword], () => {
 })
 
 watch([currentPage, pageSize], () => {
-  if (isTelegramMode.value) {
+  if (isTelegramMode.value && !currentTelegramGroupId.value) {
     browseTelegramChannel()
   }
 })

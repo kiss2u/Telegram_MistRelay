@@ -81,6 +81,10 @@ const desktopDownloadStats = computed(() => {
   )
 })
 
+function isDesktopDownloadTerminal(task: DesktopTransferStatus): boolean {
+  return task.state === 'completed' || task.state === 'error'
+}
+
 function getDesktopDownloadLabel(task: DesktopTransferStatus): string {
   if (task.state === 'completed') return '已完成'
   if (task.state === 'error') return '失败'
@@ -114,6 +118,57 @@ function formatDesktopDownloadMeta(task: DesktopTransferStatus): string {
     return `${downloaded} / ${formatDesktopBytes(task.totalBytes)}`
   }
   return downloaded
+}
+
+function removeDesktopDownload(transferId: string): void {
+  const nextStatuses = { ...desktopDownloadStatuses.value }
+  const pathKey = transferPathKeys[transferId]
+
+  delete nextStatuses[transferId]
+  desktopDownloadStatuses.value = nextStatuses
+  delete transferPathKeys[transferId]
+  notifiedTransfers.delete(transferId)
+
+  if (pathKey && !Object.values(transferPathKeys).includes(pathKey)) {
+    const nextDownloadingPaths = { ...downloadingPaths.value }
+    delete nextDownloadingPaths[pathKey]
+    downloadingPaths.value = nextDownloadingPaths
+  }
+}
+
+function clearDesktopDownloads(mode: 'completed' | 'failed' | 'all'): void {
+  const entries = Object.entries(desktopDownloadStatuses.value)
+  const remaining = Object.fromEntries(entries.filter(([, task]) => {
+    if (mode === 'all') {
+      return !isDesktopDownloadTerminal(task)
+    }
+    if (mode === 'completed') {
+      return task.state !== 'completed'
+    }
+    return task.state !== 'error'
+  }))
+
+  const removedIds = entries
+    .filter(([, task]) => {
+      if (mode === 'all') {
+        return isDesktopDownloadTerminal(task)
+      }
+      return mode === 'completed' ? task.state === 'completed' : task.state === 'error'
+    })
+    .map(([transferId]) => transferId)
+
+  desktopDownloadStatuses.value = remaining
+  removedIds.forEach((transferId) => {
+    const pathKey = transferPathKeys[transferId]
+    delete transferPathKeys[transferId]
+    notifiedTransfers.delete(transferId)
+
+    if (pathKey && !Object.values(transferPathKeys).includes(pathKey)) {
+      const nextDownloadingPaths = { ...downloadingPaths.value }
+      delete nextDownloadingPaths[pathKey]
+      downloadingPaths.value = nextDownloadingPaths
+    }
+  })
 }
 
 async function startTrackedDesktopDownload(params: StartDesktopDownloadParams): Promise<boolean> {
@@ -169,10 +224,13 @@ export function useDesktopDownloads() {
     downloadingPaths,
     desktopDownloadList,
     desktopDownloadStats,
+    isDesktopDownloadTerminal,
     getDesktopDownloadLabel,
     getDesktopDownloadTagType,
     getDesktopDownloadProgressStatus,
     formatDesktopDownloadMeta,
+    removeDesktopDownload,
+    clearDesktopDownloads,
     startTrackedDesktopDownload,
   }
 }

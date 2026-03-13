@@ -1,28 +1,54 @@
 <template>
   <div class="local-downloads-page">
     <el-card shadow="hover" class="local-downloads-shell">
-      <div class="stats-row">
-        <div class="stat-item">
-          <span class="stat-item-value">{{ desktopDownloadStats.total }}</span>
-          <span class="stat-item-label">总任务</span>
+      <div class="page-toolbar">
+        <div class="page-title">本地下载任务</div>
+        <div class="page-actions">
+          <el-button @click="router.push('/drive')">前往 tg 网盘</el-button>
         </div>
-        <div class="stat-item is-active">
-          <span class="stat-item-value">{{ desktopDownloadStats.active }}</span>
-          <span class="stat-item-label">进行中</span>
+      </div>
+
+      <div class="tasks-toolbar">
+        <div class="stats-row">
+          <div class="stat-item">
+            <span class="stat-item-value">{{ desktopDownloadStats.total }}</span>
+            <span class="stat-item-label">总任务</span>
+          </div>
+          <div class="stat-item is-active">
+            <span class="stat-item-value">{{ desktopDownloadStats.active }}</span>
+            <span class="stat-item-label">进行中</span>
+          </div>
+          <div class="stat-item is-success">
+            <span class="stat-item-value">{{ desktopDownloadStats.completed }}</span>
+            <span class="stat-item-label">已完成</span>
+          </div>
+          <div class="stat-item is-danger">
+            <span class="stat-item-value">{{ desktopDownloadStats.failed }}</span>
+            <span class="stat-item-label">失败</span>
+          </div>
         </div>
-        <div class="stat-item is-success">
-          <span class="stat-item-value">{{ desktopDownloadStats.completed }}</span>
-          <span class="stat-item-label">已完成</span>
-        </div>
-        <div class="stat-item is-danger">
-          <span class="stat-item-value">{{ desktopDownloadStats.failed }}</span>
-          <span class="stat-item-label">失败</span>
+
+        <div class="page-actions">
+          <el-button @click="clearDesktopDownloads('completed')" :disabled="desktopDownloadStats.completed === 0">
+            清空已完成
+          </el-button>
+          <el-button @click="clearDesktopDownloads('failed')" :disabled="desktopDownloadStats.failed === 0">
+            清空失败
+          </el-button>
+          <el-button
+            type="danger"
+            plain
+            @click="clearDesktopDownloads('all')"
+            :disabled="desktopDownloadStats.total === 0"
+          >
+            清空全部
+          </el-button>
         </div>
       </div>
 
       <el-empty
         v-if="desktopDownloadList.length === 0"
-        description='还没有本地下载任务，请到"我的网盘"里选择文件下载。'
+        description='还没有本地下载任务，请到"tg网盘"里选择文件下载。'
         :image-size="80"
       />
 
@@ -34,7 +60,7 @@
         style="width: 100%"
         row-key="transferId"
       >
-        <el-table-column prop="fileName" label="文件名" min-width="260" show-overflow-tooltip>
+        <el-table-column prop="fileName" label="文件名" min-width="240" show-overflow-tooltip>
           <template #default="{ row }">
             <div class="file-info">
               <el-icon class="file-icon"><Document /></el-icon>
@@ -74,52 +100,100 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="错误" min-width="180" show-overflow-tooltip>
+        <el-table-column label="操作" width="170" fixed="right">
           <template #default="{ row }">
-            <span v-if="row.error" class="error-text">{{ row.error }}</span>
-            <span v-else class="no-error">-</span>
+            <div class="row-actions">
+              <el-button link type="primary" @click="showTaskDetails(row)">查看详情</el-button>
+              <el-button
+                link
+                type="danger"
+                :disabled="!isDesktopDownloadTerminal(row)"
+                @click="removeDesktopDownload(row.transferId)"
+              >
+                删除
+              </el-button>
+            </div>
           </template>
         </el-table-column>
       </el-table>
     </el-card>
+
+    <el-dialog v-model="detailVisible" title="任务详情" width="680px">
+      <el-descriptions v-if="selectedTask" :column="1" border>
+        <el-descriptions-item label="文件名">{{ selectedTask.fileName }}</el-descriptions-item>
+        <el-descriptions-item label="状态">
+          <el-tag :type="getDesktopDownloadTagType(selectedTask)" size="small">
+            {{ getDesktopDownloadLabel(selectedTask) }}
+          </el-tag>
+        </el-descriptions-item>
+        <el-descriptions-item label="进度">{{ selectedTask.progressPercent }}%</el-descriptions-item>
+        <el-descriptions-item label="大小">{{ formatDesktopDownloadMeta(selectedTask) }}</el-descriptions-item>
+        <el-descriptions-item label="保存位置">{{ selectedTask.localPath }}</el-descriptions-item>
+        <el-descriptions-item label="错误信息">
+          {{ selectedTask.error || '-' }}
+        </el-descriptions-item>
+        <el-descriptions-item label="传输 ID">{{ selectedTask.transferId }}</el-descriptions-item>
+      </el-descriptions>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
+import { ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { Document } from '@element-plus/icons-vue'
 import { useDesktopDownloads } from '@/composables/useDesktopDownloads'
+import type { DesktopTransferStatus } from '@/utils/desktop'
+
+const router = useRouter()
+const detailVisible = ref(false)
+const selectedTask = ref<DesktopTransferStatus | null>(null)
 
 const {
   desktopDownloadList,
   desktopDownloadStats,
+  isDesktopDownloadTerminal,
   getDesktopDownloadLabel,
   getDesktopDownloadTagType,
   getDesktopDownloadProgressStatus,
   formatDesktopDownloadMeta,
+  removeDesktopDownload,
+  clearDesktopDownloads,
 } = useDesktopDownloads()
+
+function showTaskDetails(task: DesktopTransferStatus) {
+  selectedTask.value = task
+  detailVisible.value = true
+}
 </script>
 
 <style scoped>
 .local-downloads-page {
-  @apply space-y-8;
-  animation: fadeIn 0.5s ease-out;
+  @apply space-y-6;
 }
 
-.local-downloads-page :deep(.el-card) {
-  border-radius: 16px;
-  border: 1px solid rgba(229, 231, 235, 0.8);
-  transition: all 0.3s ease;
-  overflow: hidden;
+.local-downloads-shell {
+  @apply rounded-2xl;
 }
 
-.local-downloads-page :deep(.el-card:hover) {
-  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.08);
-  border-color: rgba(102, 126, 234, 0.2);
+.page-toolbar {
+  @apply mb-6 flex flex-col gap-4 border-b border-slate-100 pb-4 lg:flex-row lg:items-center lg:justify-between;
+}
+
+.page-title {
+  @apply text-lg font-semibold text-slate-900;
+}
+
+.page-actions {
+  @apply flex flex-wrap items-center gap-3;
+}
+
+.tasks-toolbar {
+  @apply mb-5 flex flex-col gap-4;
 }
 
 .stats-row {
-  @apply flex items-center gap-6 mb-5 pb-5;
-  border-bottom: 1px solid rgba(229, 231, 235, 0.8);
+  @apply flex flex-wrap items-center gap-6;
 }
 
 .stat-item {
@@ -127,23 +201,23 @@ const {
 }
 
 .stat-item-value {
-  @apply text-2xl font-bold text-gray-900;
+  @apply text-2xl font-bold text-slate-900;
 }
 
 .stat-item-label {
-  @apply text-sm text-gray-500 font-medium;
+  @apply text-sm font-medium text-slate-500;
 }
 
 .stat-item.is-active .stat-item-value {
-  color: #667eea;
+  color: #2563eb;
 }
 
 .stat-item.is-success .stat-item-value {
-  color: #10b981;
+  color: #059669;
 }
 
 .stat-item.is-danger .stat-item-value {
-  color: #ef4444;
+  color: #dc2626;
 }
 
 .file-info {
@@ -151,22 +225,21 @@ const {
 }
 
 .file-icon {
-  color: #667eea;
-  transition: all 0.2s ease;
+  color: #2563eb;
 }
 
-.local-downloads-page :deep(.el-table__row:hover) .file-icon {
-  transform: scale(1.1);
+.row-actions {
+  @apply flex items-center gap-3;
 }
 
 .size-text {
-  @apply text-sm text-gray-700 font-semibold;
+  @apply text-sm font-semibold text-slate-700;
 }
 
 .path-text {
   font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
   font-size: 12px;
-  color: #6b7280;
+  color: #64748b;
   word-break: break-all;
 }
 
@@ -175,46 +248,7 @@ const {
 }
 
 .no-error {
-  @apply text-gray-400;
+  @apply text-slate-400;
 }
 
-/* table */
-.local-downloads-page :deep(.el-table) {
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.local-downloads-page :deep(.el-table__row) {
-  transition: all 0.2s ease;
-}
-
-.local-downloads-page :deep(.el-table__row:hover) {
-  background: linear-gradient(90deg, rgba(102, 126, 234, 0.05), rgba(118, 75, 162, 0.03));
-}
-
-/* progress */
-:deep(.el-progress__text) {
-  @apply font-semibold;
-}
-
-:deep(.el-progress-bar__outer) {
-  border-radius: 10px;
-  overflow: hidden;
-}
-
-:deep(.el-progress-bar__inner) {
-  border-radius: 10px;
-  transition: all 0.3s ease;
-}
-
-/* tag */
-:deep(.el-tag) {
-  border-radius: 6px;
-  font-weight: 500;
-}
-
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
-}
 </style>
