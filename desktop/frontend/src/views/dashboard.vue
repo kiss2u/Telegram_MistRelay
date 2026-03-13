@@ -163,6 +163,11 @@
                     :color="getLoadColor(load)"
                     :stroke-width="6"
                   />
+                  <div v-if="status.bot_metrics?.[bot]" class="bot-load-meta">
+                    <span>吞吐 {{ formatRate(status.bot_metrics[bot].throughput_bps) }}</span>
+                    <span>冷却 {{ formatCooldown(status.bot_metrics[bot].cooldown_remaining) }}</span>
+                    <span>失败 {{ status.bot_metrics[bot].failure_streak }}</span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -469,6 +474,20 @@ function getLoadColor(load: number): string {
   if (load <= 2) return '#10b981'
   if (load <= 5) return '#f59e0b'
   return '#ef4444'
+}
+
+function formatRate(bytesPerSecond: number): string {
+  if (!bytesPerSecond || bytesPerSecond <= 0) return '0 B/s'
+  return `${formatBytes(bytesPerSecond)}/s`
+}
+
+function formatCooldown(seconds: number): string {
+  if (!seconds || seconds <= 0) return '0s'
+  if (seconds < 10) return `${seconds.toFixed(1)}s`
+  if (seconds < 60) return `${Math.ceil(seconds)}s`
+  const minutes = Math.floor(seconds / 60)
+  const remain = Math.ceil(seconds % 60)
+  return `${minutes}m ${remain}s`
 }
 
 function getResourceTagType(percent: number): 'success' | 'warning' | 'danger' {
@@ -782,6 +801,11 @@ onMounted(() => {
 .bot-load-name {
   @apply font-medium text-gray-700;
   font-size: 13px;
+}
+
+.bot-load-meta {
+  @apply flex flex-wrap items-center gap-3 text-xs text-gray-500;
+  font-variant-numeric: tabular-nums;
 }
 
 .activity-row {

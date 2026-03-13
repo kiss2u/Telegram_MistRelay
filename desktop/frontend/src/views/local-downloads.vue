@@ -94,6 +94,12 @@
           </template>
         </el-table-column>
 
+        <el-table-column label="速度" width="120">
+          <template #default="{ row }">
+            <span class="speed-text">{{ formatDesktopDownloadSpeed(row) }}</span>
+          </template>
+        </el-table-column>
+
         <el-table-column prop="localPath" label="保存位置" min-width="240" show-overflow-tooltip>
           <template #default="{ row }">
             <span class="path-text">{{ row.localPath }}</span>
@@ -128,6 +134,7 @@
         </el-descriptions-item>
         <el-descriptions-item label="进度">{{ selectedTask.progressPercent }}%</el-descriptions-item>
         <el-descriptions-item label="大小">{{ formatDesktopDownloadMeta(selectedTask) }}</el-descriptions-item>
+        <el-descriptions-item label="下载速度">{{ formatDesktopDownloadSpeed(selectedTask) }}</el-descriptions-item>
         <el-descriptions-item label="保存位置">{{ selectedTask.localPath }}</el-descriptions-item>
         <el-descriptions-item label="错误信息">
           {{ selectedTask.error || '-' }}
@@ -157,6 +164,7 @@ const {
   getDesktopDownloadTagType,
   getDesktopDownloadProgressStatus,
   formatDesktopDownloadMeta,
+  formatDesktopDownloadSpeed,
   removeDesktopDownload,
   clearDesktopDownloads,
 } = useDesktopDownloads()
@@ -234,6 +242,10 @@ function showTaskDetails(task: DesktopTransferStatus) {
 
 .size-text {
   @apply text-sm font-semibold text-slate-700;
+}
+
+.speed-text {
+  @apply text-sm font-semibold text-sky-600;
 }
 
 .path-text {

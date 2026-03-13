@@ -3,7 +3,17 @@ import asyncio
 import logging
 from WebStreamer import Var
 from typing import Dict, Union, Optional
-from WebStreamer.bot import work_loads, multi_clients, channel_accessible_clients
+from WebStreamer.bot import (
+    work_loads,
+    multi_clients,
+    channel_accessible_clients,
+    select_stream_bot,
+    acquire_bot_slot,
+    release_bot_slot,
+    mark_bot_success,
+    mark_bot_failure,
+    record_bot_bytes,
+)
 from pyrogram import Client, utils, raw
 from .file_properties import get_file_ids
 from pyrogram.session import Session, Auth
@@ -24,28 +34,7 @@ def get_next_available_client(current_index: int, exclude_indices: Optional[set]
     if exclude_indices is None:
         exclude_indices = set()
     exclude_indices.add(current_index)
-    
-    # 优先选择能访问频道的客户端
-    if channel_accessible_clients:
-        available_loads = {
-            k: v for k, v in work_loads.items()
-            if k in channel_accessible_clients 
-            and k in multi_clients
-            and k not in exclude_indices
-        }
-        if available_loads:
-            return min(available_loads, key=available_loads.get)
-    
-    # 回退到所有可用客户端
-    valid_loads = {
-        k: v for k, v in work_loads.items()
-        if k in multi_clients
-        and k not in exclude_indices
-    }
-    if valid_loads:
-        return min(valid_loads, key=valid_loads.get)
-    
-    return None
+    return select_stream_bot(exclude_indices=exclude_indices, prefer_channel=True)
 
 class ByteStreamer:
     def __init__(self, client: Client):
@@ -265,6 +254,7 @@ class ByteStreamer:
     async def _try_get_file_chunk(
         self,
         client: Client,
+        client_index: int,
         file_id: FileId,
         location,
         offset: int,
@@ -286,6 +276,7 @@ class ByteStreamer:
                         location=location, offset=offset, limit=chunk_size
                     ),
                 )
+                mark_bot_success(client_index)
                 return True, r, client, None
                 
             except (OSError, ConnectionError, TimeoutError, AuthBytesInvalid, TypeError, AttributeError) as e:
@@ -335,6 +326,7 @@ class ByteStreamer:
                         logger.warning(f"连接错误，重试失败 (offset: {offset}): {error_type}")
                     else:
                         logger.warning(f"获取文件块失败，已达到最大重试次数 (offset: {offset}): {error_type}")
+                    mark_bot_failure(client_index, e)
                     return False, None, client, None
         
         return False, None, client, None
@@ -358,31 +350,36 @@ class ByteStreamer:
         client = self.client
         current_index = index
         failed_indices = set()  # 记录失败的客户端索引
-        
-        # 确保索引存在于 work_loads 中
-        if current_index not in work_loads:
-            logger.error(f"客户端索引 {current_index} 不存在于 work_loads 中")
-            return
-        
-        work_loads[current_index] += 1
-        logger.debug(f"Starting to yielding file with client {current_index} (当前负载: {work_loads[current_index]}).")
+        slot_acquired = False
+
+        def acquire_current_slot():
+            nonlocal slot_acquired
+            acquire_bot_slot(current_index)
+            slot_acquired = True
+            logger.debug(f"Starting to yielding file with client {current_index} (当前负载: {work_loads.get(current_index, 0)}).")
+
+        def release_current_slot():
+            nonlocal slot_acquired
+            if slot_acquired:
+                release_bot_slot(current_index)
+                slot_acquired = False
+                logger.debug(f"客户端 {current_index} 负载已减少 (当前负载: {work_loads.get(current_index, 0)})")
+
+        acquire_current_slot()
         
         current_part = 1
         location = await self.get_location(file_id)
 
         # 获取初始文件块，支持客户端切换
         success, r, client, _ = await self._try_get_file_chunk(
-            client, file_id, location, offset, chunk_size, max_retries=3
+            client, current_index, file_id, location, offset, chunk_size, max_retries=3
         )
         
         # 如果失败，尝试切换到其他客户端
         if not success:
             logger.warning(f"客户端 {current_index} 获取初始文件块失败，尝试切换到其他客户端")
             failed_indices.add(current_index)
-            
-            # 减少当前客户端负载
-            if current_index in work_loads:
-                work_loads[current_index] -= 1
+            release_current_slot()
             
             # 尝试切换到其他客户端
             max_client_switches = 3  # 最多尝试切换3个客户端
@@ -397,14 +394,14 @@ class ByteStreamer:
                 logger.info(f"切换到客户端 {next_index} (尝试 {switch_attempt + 1}/{max_client_switches})")
                 current_index = next_index
                 client = multi_clients[current_index]
-                work_loads[current_index] += 1
+                acquire_current_slot()
                 
                 # 更新 ByteStreamer 的客户端引用
                 self.client = client
                 
                 # 尝试获取文件块
                 success, r, client, _ = await self._try_get_file_chunk(
-                    client, file_id, location, offset, chunk_size, max_retries=2
+                    client, current_index, file_id, location, offset, chunk_size, max_retries=2
                 )
                 
                 if success:
@@ -413,8 +410,7 @@ class ByteStreamer:
                     break
                 else:
                     failed_indices.add(current_index)
-                    if current_index in work_loads:
-                        work_loads[current_index] -= 1
+                    release_current_slot()
             
             if not switch_success:
                 logger.error("所有客户端都无法获取初始文件块，停止文件流传输")
@@ -427,13 +423,17 @@ class ByteStreamer:
                     if not chunk:
                         break
                     elif part_count == 1:
-                        yield chunk[first_part_cut:last_part_cut]
+                        output_chunk = chunk[first_part_cut:last_part_cut]
                     elif current_part == 1:
-                        yield chunk[first_part_cut:]
+                        output_chunk = chunk[first_part_cut:]
                     elif current_part == part_count:
-                        yield chunk[:last_part_cut]
+                        output_chunk = chunk[:last_part_cut]
                     else:
-                        yield chunk
+                        output_chunk = chunk
+
+                    if output_chunk:
+                        record_bot_bytes(current_index, len(output_chunk))
+                        yield output_chunk
 
                     current_part += 1
                     offset += chunk_size
@@ -442,18 +442,15 @@ class ByteStreamer:
                         break
 
                     # 尝试获取下一个文件块
-                    success, r, new_client, _ = await self._try_get_file_chunk(
-                        client, file_id, location, offset, chunk_size, max_retries=2
+                    success, r, client, _ = await self._try_get_file_chunk(
+                        client, current_index, file_id, location, offset, chunk_size, max_retries=2
                     )
                     
                     if not success:
                         # 当前客户端失败，尝试切换到其他客户端
                         logger.warning(f"客户端 {current_index} 获取文件块失败 (offset: {offset})，尝试切换到其他客户端")
                         failed_indices.add(current_index)
-                        
-                        # 减少当前客户端负载
-                        if current_index in work_loads:
-                            work_loads[current_index] -= 1
+                        release_current_slot()
                         
                         # 尝试切换到其他客户端
                         max_client_switches = 3
@@ -468,14 +465,14 @@ class ByteStreamer:
                             logger.info(f"切换到客户端 {next_index} 继续传输 (offset: {offset}, 尝试 {switch_attempt + 1}/{max_client_switches})")
                             current_index = next_index
                             client = multi_clients[current_index]
-                            work_loads[current_index] += 1
+                            acquire_current_slot()
                             
                             # 更新 ByteStreamer 的客户端引用
                             self.client = client
                             
                             # 尝试获取文件块
                             success, r, client, _ = await self._try_get_file_chunk(
-                                client, file_id, location, offset, chunk_size, max_retries=2
+                                client, current_index, file_id, location, offset, chunk_size, max_retries=2
                             )
                             
                             if success:
@@ -484,8 +481,7 @@ class ByteStreamer:
                                 break
                             else:
                                 failed_indices.add(current_index)
-                                if current_index in work_loads:
-                                    work_loads[current_index] -= 1
+                                release_current_slot()
                         
                         if not switch_success:
                             logger.error(f"所有客户端都无法获取文件块，停止文件流传输 (offset: {offset})")
@@ -504,12 +500,7 @@ class ByteStreamer:
                 logger.error(f"Unexpected error in yield_file: {e}", exc_info=True)
         finally:
             logger.debug(f"Finished yielding file with {current_part} parts.")
-            # 确保索引存在后再减少负载（使用当前使用的客户端索引）
-            if current_index in work_loads:
-                work_loads[current_index] -= 1
-                logger.debug(f"客户端 {current_index} 负载已减少 (当前负载: {work_loads[current_index]})")
-            else:
-                logger.warning(f"尝试减少客户端 {current_index} 的负载，但索引不存在于 work_loads 中")
+            release_current_slot()
 
     
     async def clean_cache(self) -> None:
@@ -520,4 +511,3 @@ class ByteStreamer:
             await asyncio.sleep(self.clean_timer)
             self.cached_file_ids.clear()
             logger.debug("Cleaned the cache")
-

@@ -193,12 +193,12 @@
               <el-form-item label="每文件下载线程数">
                 <el-input-number
                   v-model="desktopThreadsPerDownload"
-                  :min="1"
+                  :min="2"
                   :max="32"
                   :step="1"
                 />
                 <div class="el-form-item__help">
-                  单个文件用多少个线程并行分片下载。服务器不支持 Range 时会自动回退。
+                  单个文件至少使用 2 个线程；如果服务端有 4 个可用 bot，实际下载会至少提升到 4 个连接。下载源不支持 Range 时会直接报错。
                 </div>
               </el-form-item>
 

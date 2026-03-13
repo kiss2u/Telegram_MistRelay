@@ -1,9 +1,18 @@
+export interface BotMetricSnapshot {
+  active_requests: number
+  cooldown_remaining: number
+  failure_streak: number
+  throughput_bps: number
+  bytes_served: number
+}
+
 export interface ServerStatus {
   server_status: string
   uptime: string
   telegram_bot: string
   connected_bots: number
   loads: Record<string, number>
+  bot_metrics?: Record<string, BotMetricSnapshot>
   version: string
 }
 

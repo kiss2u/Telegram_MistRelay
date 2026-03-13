@@ -11,7 +11,7 @@ use std::{
         Arc, Condvar, Mutex,
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use reqwest::{blocking::Client, header, Proxy, StatusCode};
 use serde::{Deserialize, Serialize};
@@ -20,8 +20,10 @@ use tauri_plugin_dialog::{DialogExt, FilePath};
 use url::Url;
 
 const PREVIEW_READY_BYTES: u64 = 4 * 1024 * 1024;
+const MIN_THREADS_PER_DOWNLOAD: u32 = 2;
 const DESKTOP_UPDATER_MANIFEST_URL: &str =
     "https://github.com/qianlong520/Telegram_MistRelay/releases/latest/download/latest.json";
+const MISTRELAY_MIN_THREADS_HEADER: &str = "x-mistrelay-min-threads";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -149,6 +151,7 @@ struct DesktopTransferStatus {
     local_path: String,
     downloaded_bytes: u64,
     total_bytes: Option<u64>,
+    download_speed: u64,
     progress_percent: f64,
     state: String,
     ready_for_preview: bool,
@@ -159,6 +162,9 @@ struct DesktopTransferStatus {
 struct TransferProgress {
     downloaded_bytes: u64,
     total_bytes: Option<u64>,
+    download_speed: u64,
+    last_speed_sample_bytes: u64,
+    last_speed_sample_at: Option<Instant>,
     complete: bool,
     ready_for_preview: bool,
     error: Option<String>,
@@ -268,7 +274,14 @@ fn load_desktop_client_config() -> Result<DesktopClientConfig, String> {
         }
     };
 
-    serde_json::from_str(&raw).map_err(|error| format!("解析桌面客户端配置失败: {error}"))
+    let mut config = serde_json::from_str::<DesktopClientConfig>(&raw)
+        .map_err(|error| format!("解析桌面客户端配置失败: {error}"))?;
+    config.download.max_concurrent_downloads = config.download.max_concurrent_downloads.max(1);
+    config.download.threads_per_download = config
+        .download
+        .threads_per_download
+        .clamp(MIN_THREADS_PER_DOWNLOAD, 32);
+    Ok(config)
 }
 
 fn validate_proxy_url(raw: &str) -> Result<Url, String> {
@@ -633,6 +646,13 @@ fn stream_transfer_to_path(handle: &TransferHandle) -> Result<(), String> {
 fn multi_thread_download(handle: &TransferHandle, num_threads: u32) -> Result<(), String> {
     ensure_parent_dir(&handle.local_path)?;
 
+    if num_threads < MIN_THREADS_PER_DOWNLOAD {
+        return Err(format!(
+            "已强制启用多连接下载，每文件下载线程数不能低于 {}",
+            MIN_THREADS_PER_DOWNLOAD
+        ));
+    }
+
     let client = build_http_client()?;
     let head_resp = client
         .head(&handle.source_url)
@@ -646,14 +666,34 @@ fn multi_thread_download(handle: &TransferHandle, num_threads: u32) -> Result<()
         .map(|v| v.eq_ignore_ascii_case("bytes"))
         .unwrap_or(false);
     let total_size = head_resp.content_length();
+    let server_min_threads = head_resp
+        .headers()
+        .get(MISTRELAY_MIN_THREADS_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u32>().ok())
+        .unwrap_or(MIN_THREADS_PER_DOWNLOAD)
+        .max(MIN_THREADS_PER_DOWNLOAD);
 
-    if !accepts_ranges || total_size.is_none() || num_threads <= 1 {
-        return stream_transfer_to_path(handle);
+    if !accepts_ranges {
+        return Err("当前下载源不支持 Range，无法执行强制多连接下载".to_string());
+    }
+
+    if total_size.is_none() {
+        return Err("当前下载源未返回文件大小，无法执行强制多连接下载".to_string());
     }
 
     let total = total_size.unwrap();
     if total == 0 {
-        return stream_transfer_to_path(handle);
+        return Err("当前下载源返回的文件大小为 0，无法执行多连接下载".to_string());
+    }
+
+    let requested_threads = num_threads.max(server_min_threads);
+    let effective_threads = requested_threads.min(total as u32);
+    if effective_threads < server_min_threads {
+        return Err(format!(
+            "文件过小，无法满足至少 {} 个并发连接的下载要求",
+            server_min_threads
+        ));
     }
 
     {
@@ -669,15 +709,15 @@ fn multi_thread_download(handle: &TransferHandle, num_threads: u32) -> Result<()
         .map_err(|e| format!("预分配文件空间失败: {e}"))?;
     drop(file);
 
-    let chunk_size = total / num_threads as u64;
+    let chunk_size = total / effective_threads as u64;
     let shared_downloaded = Arc::new(AtomicU64::new(0));
     let shared_error: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
 
-    let mut thread_handles = Vec::with_capacity(num_threads as usize);
+    let mut thread_handles = Vec::with_capacity(effective_threads as usize);
 
-    for i in 0..num_threads {
+    for i in 0..effective_threads {
         let start = i as u64 * chunk_size;
-        let end = if i == num_threads - 1 {
+        let end = if i == effective_threads - 1 {
             total - 1
         } else {
             (i + 1) as u64 * chunk_size - 1
@@ -796,9 +836,44 @@ fn spawn_progress_emitter(
     });
 }
 
+fn refresh_download_speed(progress: &mut TransferProgress) {
+    let now = Instant::now();
+
+    if progress.complete || progress.error.is_some() {
+        progress.download_speed = 0;
+        progress.last_speed_sample_bytes = progress.downloaded_bytes;
+        progress.last_speed_sample_at = Some(now);
+        return;
+    }
+
+    match progress.last_speed_sample_at {
+        Some(last_at) => {
+            let elapsed = now.saturating_duration_since(last_at);
+            if elapsed >= Duration::from_millis(250) {
+                let delta = progress
+                    .downloaded_bytes
+                    .saturating_sub(progress.last_speed_sample_bytes);
+                progress.download_speed = if delta == 0 {
+                    0
+                } else {
+                    (delta as f64 / elapsed.as_secs_f64()).round() as u64
+                };
+                progress.last_speed_sample_bytes = progress.downloaded_bytes;
+                progress.last_speed_sample_at = Some(now);
+            }
+        }
+        None => {
+            progress.download_speed = 0;
+            progress.last_speed_sample_bytes = progress.downloaded_bytes;
+            progress.last_speed_sample_at = Some(now);
+        }
+    }
+}
+
 fn snapshot_transfer_status(transfer_id: &str, handle: &TransferHandle) -> Result<DesktopTransferStatus, String> {
     let (lock, _) = &*handle.inner;
-    let progress = lock.lock().map_err(|_| "缓存状态已损坏".to_string())?;
+    let mut progress = lock.lock().map_err(|_| "缓存状态已损坏".to_string())?;
+    refresh_download_speed(&mut progress);
 
     let progress_percent = progress.total_bytes.map_or(0.0, |total| {
         if total == 0 {
@@ -826,6 +901,7 @@ fn snapshot_transfer_status(transfer_id: &str, handle: &TransferHandle) -> Resul
         local_path: handle.local_path.to_string_lossy().to_string(),
         downloaded_bytes: progress.downloaded_bytes,
         total_bytes: progress.total_bytes,
+        download_speed: progress.download_speed,
         progress_percent,
         state: state.to_string(),
         ready_for_preview: progress.ready_for_preview,
@@ -846,6 +922,9 @@ fn wait_for_available_bytes(handle: &TransferHandle, needed_bytes: u64) -> Resul
             return Ok(TransferProgress {
                 downloaded_bytes: progress.downloaded_bytes,
                 total_bytes: progress.total_bytes,
+                download_speed: progress.download_speed,
+                last_speed_sample_bytes: progress.last_speed_sample_bytes,
+                last_speed_sample_at: progress.last_speed_sample_at,
                 complete: progress.complete,
                 ready_for_preview: progress.ready_for_preview,
                 error: progress.error.clone(),
@@ -1164,7 +1243,10 @@ fn save_desktop_client_config(
         download: DesktopDownloadConfig {
             download_dir,
             max_concurrent_downloads: config.download.max_concurrent_downloads.max(1),
-            threads_per_download: config.download.threads_per_download.clamp(1, 32),
+            threads_per_download: config
+                .download
+                .threads_per_download
+                .clamp(MIN_THREADS_PER_DOWNLOAD, 32),
         },
     };
 

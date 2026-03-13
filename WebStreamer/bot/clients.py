@@ -5,7 +5,14 @@ import asyncio
 import logging
 from ..vars import Var
 from pyrogram import Client
-from . import multi_clients, work_loads, sessions_dir, StreamBot, channel_accessible_clients
+from . import (
+    multi_clients,
+    work_loads,
+    sessions_dir,
+    StreamBot,
+    channel_accessible_clients,
+    register_bot_client,
+)
 
 logger = logging.getLogger("multi_client")
 
@@ -62,6 +69,7 @@ async def initialize_clients():
     # 第一个客户端始终使用默认的StreamBot（已用BOT_TOKEN初始化）
     multi_clients[0] = StreamBot
     work_loads[0] = 0
+    register_bot_client(0)
     # 默认客户端应该能访问频道（因为它是主客户端）
     if Var.BIN_CHANNEL:
         try:
@@ -118,6 +126,7 @@ async def initialize_clients():
                 
                 multi_clients[index] = client
                 work_loads[index] = 0
+                register_bot_client(index)
                 logger.info(f"客户端 {index} 已初始化: @{bot_info.username}")
             except Exception as e:
                 logger.error(f"初始化客户端 {index} 失败 (token: {bot_token[:10]}...): {e}", exc_info=True)

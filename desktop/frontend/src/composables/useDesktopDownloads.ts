@@ -120,6 +120,14 @@ function formatDesktopDownloadMeta(task: DesktopTransferStatus): string {
   return downloaded
 }
 
+function formatDesktopDownloadSpeed(task: DesktopTransferStatus): string {
+  if (task.state !== 'downloading' || !task.downloadSpeed || task.downloadSpeed <= 0) {
+    return '-'
+  }
+
+  return `${formatDesktopBytes(task.downloadSpeed)}/s`
+}
+
 function removeDesktopDownload(transferId: string): void {
   const nextStatuses = { ...desktopDownloadStatuses.value }
   const pathKey = transferPathKeys[transferId]
@@ -199,6 +207,7 @@ async function startTrackedDesktopDownload(params: StartDesktopDownloadParams): 
         localPath: session.localPath,
         downloadedBytes: 0,
         totalBytes: undefined,
+        downloadSpeed: 0,
         progressPercent: 0,
         state: 'pending',
         readyForPreview: false,
@@ -229,6 +238,7 @@ export function useDesktopDownloads() {
     getDesktopDownloadTagType,
     getDesktopDownloadProgressStatus,
     formatDesktopDownloadMeta,
+    formatDesktopDownloadSpeed,
     removeDesktopDownload,
     clearDesktopDownloads,
     startTrackedDesktopDownload,

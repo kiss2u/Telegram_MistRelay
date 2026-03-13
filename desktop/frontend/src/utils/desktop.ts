@@ -47,6 +47,7 @@ export interface DesktopTransferStatus {
   localPath: string
   downloadedBytes: number
   totalBytes?: number
+  downloadSpeed: number
   progressPercent: number
   state: 'pending' | 'downloading' | 'ready' | 'completed' | 'error'
   readyForPreview: boolean
@@ -220,9 +221,28 @@ async function getPublishedUpdateInfo(): Promise<PublishedUpdateInfo> {
   return invokeDesktopCommand<PublishedUpdateInfo>('desktop_get_published_update_info')
 }
 
+async function getConfiguredUpdaterProxy(): Promise<string | undefined> {
+  try {
+    const config = await getDesktopClientConfig()
+    if (!config.proxy.enabled) {
+      return undefined
+    }
+
+    const proxy = config.proxy.url.trim()
+    if (!proxy || !isValidDesktopProxyUrl(proxy)) {
+      return undefined
+    }
+
+    return proxy
+  } catch {
+    return undefined
+  }
+}
+
 export async function checkForUpdate(): Promise<{ result: UpdateCheckResult; update: Update | null }> {
   try {
-    const update = await check()
+    const proxy = await getConfiguredUpdaterProxy()
+    const update = await check(proxy ? { proxy } : undefined)
 
     if (!update) {
       return {

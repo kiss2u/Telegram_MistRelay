@@ -227,7 +227,6 @@
                   <el-button
                     v-if="!item.isDir"
                     link
-                    :loading="Boolean(downloadingPaths[item.path])"
                     @click.stop="handleDownload(item)"
                   >
                     下载
@@ -303,7 +302,6 @@
                     circle
                     size="small"
                     :icon="Download"
-                    :loading="Boolean(downloadingPaths[item.path])"
                     @click.stop="handleDownload(item)"
                   />
                   <el-button
@@ -351,7 +349,7 @@
             <el-button type="primary" @click="handleRowClick(selectedItem)">
               {{ selectedItem.isDir ? '进入文件夹' : '打开预览' }}
             </el-button>
-            <el-button v-if="!selectedItem.isDir" @click="handleDownload(selectedItem)" :loading="Boolean(downloadingPaths[selectedItem.path])">
+            <el-button v-if="!selectedItem.isDir" @click="handleDownload(selectedItem)">
               下载到本地
             </el-button>
             <el-button type="danger" plain @click="handleDelete(selectedItem)">
@@ -483,10 +481,7 @@ import {
 import { useDesktopDownloads } from '@/composables/useDesktopDownloads'
 import { buildAuthorizedApiUrl, toAbsoluteServerUrl } from '@/utils/runtime'
 
-const {
-  downloadingPaths,
-  startTrackedDesktopDownload,
-} = useDesktopDownloads()
+const { startTrackedDesktopDownload } = useDesktopDownloads()
 
 interface RemoteUsageState {
   response?: DriveUsageResponse
@@ -1227,13 +1222,29 @@ async function handleDownload(item: DriveItem) {
     })
   }
 
-  await startTrackedDesktopDownload({
+  const queued = await startTrackedDesktopDownload({
     sourceUrl: url,
     remote: isTelegramMode.value ? 'telegram' : currentRemote.value,
     remotePath: item.path,
     fileName: item.name,
     pathKey: item.path,
   })
+
+  if (queued) {
+    ElMessage({
+      type: 'success',
+      message: `已添加到本地下载中: ${item.name}`,
+      duration: 1800,
+      showClose: false,
+    })
+  } else {
+    ElMessage({
+      type: 'info',
+      message: `该文件已在本地下载队列中: ${item.name}`,
+      duration: 1800,
+      showClose: false,
+    })
+  }
 }
 
 function getTelegramGroupIdFromItem(item: DriveItem): string | null {
