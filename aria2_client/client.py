@@ -413,10 +413,12 @@ class AsyncAria2Client:
             # 获取数据库中的当前状态
             download_id = get_download_id_by_gid(gid)
             db_status = None
+            db_error_message = None
             if download_id:
                 download = get_download_by_id(download_id)
                 if download:
                     db_status = download.get('status')
+                    db_error_message = download.get('error_message')
             
             # 根据aria2状态触发相应处理
             if status == 'active':
@@ -471,6 +473,11 @@ class AsyncAria2Client:
             elif status == 'error':
                 # 任务出错
                 error_msg = aria2_status.get('errorMessage', 'Unknown error')
+                if db_status == 'failed' and db_error_message == error_msg:
+                    # 历史错误任务仍会出现在 tell_stopped 中，避免轮询重复触发失败事件
+                    self.completed_gids.add(gid)
+                    logger.debug(f"[同步] 任务 {gid[:8]}... 错误状态已同步过，跳过重复处理")
+                    return
                 logger.error(f"[同步] ❌ 检测到任务 {gid[:8]}... 出错: {error_msg},触发错误事件")
                 event = {
                     'method': 'aria2.onDownloadError',

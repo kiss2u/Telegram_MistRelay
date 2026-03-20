@@ -452,6 +452,9 @@ class DownloadHandler:
             mark_download_failed(gid, errorMessage)
         except Exception as db_e:
             logger.error(f"更新数据库下载失败状态出错: {db_e}")
-        
+
+        # 错误任务也属于终态，避免轮询反复对同一个 gid 重复消费
+        self.completed_gids.add(gid)
+
         # 静默处理：不再发送Telegram消息，错误信息已通过数据库记录
         # WebSocket推送已在 mark_download_failed 中实现
