@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use reqwest::{blocking::Client, header, Proxy, StatusCode};
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     fs,
@@ -14,8 +16,6 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use reqwest::{blocking::Client, header, Proxy, StatusCode};
-use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 use tauri_plugin_dialog::{DialogExt, FilePath};
 use url::Url;
@@ -34,6 +34,20 @@ fn parse_total_size_from_content_range(value: &str) -> Option<u64> {
     total.trim().parse::<u64>().ok()
 }
 
+fn parse_content_range_bounds(value: &str) -> Option<(u64, u64, Option<u64>)> {
+    let trimmed = value.trim();
+    let bytes = trimmed.strip_prefix("bytes")?.trim();
+    let (range, total) = bytes.split_once('/')?;
+    let (start, end) = range.split_once('-')?;
+    let start = start.trim().parse::<u64>().ok()?;
+    let end = end.trim().parse::<u64>().ok()?;
+    let total = match total.trim() {
+        "*" => None,
+        raw => Some(raw.parse::<u64>().ok()?),
+    };
+    Some((start, end, total))
+}
+
 fn parse_server_min_threads(headers: &header::HeaderMap) -> u32 {
     headers
         .get(MISTRELAY_MIN_THREADS_HEADER)
@@ -47,19 +61,22 @@ fn probe_multi_download_capability(
     client: &Client,
     source_url: &str,
 ) -> Result<(bool, Option<u64>, u32), String> {
-    let head_resp = client
-        .head(source_url)
-        .send()
-        .map_err(|e| format!("HEAD 请求失败: {e}"))?;
+    let head_resp = client.head(source_url).send().ok();
 
     let mut accepts_ranges = head_resp
-        .headers()
-        .get(header::ACCEPT_RANGES)
+        .as_ref()
+        .and_then(|response| response.headers().get(header::ACCEPT_RANGES))
         .and_then(|v| v.to_str().ok())
         .map(|v| v.eq_ignore_ascii_case("bytes"))
         .unwrap_or(false);
-    let mut total_size = head_resp.content_length().filter(|value| *value > 0);
-    let mut server_min_threads = parse_server_min_threads(head_resp.headers());
+    let mut total_size = head_resp
+        .as_ref()
+        .and_then(|response| response.content_length())
+        .filter(|value| *value > 0);
+    let mut server_min_threads = head_resp
+        .as_ref()
+        .map(|response| parse_server_min_threads(response.headers()))
+        .unwrap_or(MIN_THREADS_PER_DOWNLOAD);
 
     if accepts_ranges && total_size.is_some() {
         return Ok((accepts_ranges, total_size, server_min_threads));
@@ -324,8 +341,7 @@ impl DesktopRuntimeState {
 }
 
 fn desktop_client_config_path() -> Result<PathBuf, String> {
-    let config_dir =
-        dirs::config_dir().ok_or_else(|| "无法定位桌面客户端配置目录".to_string())?;
+    let config_dir = dirs::config_dir().ok_or_else(|| "无法定位桌面客户端配置目录".to_string())?;
 
     Ok(config_dir.join("MistRelay").join("desktop-client.json"))
 }
@@ -419,8 +435,8 @@ fn build_http_client() -> Result<Client, String> {
         .user_agent("MistRelay Desktop");
 
     if let Some(proxy_url) = normalized_proxy_url(&load_desktop_client_config()?)? {
-        let proxy = Proxy::all(proxy_url.as_str())
-            .map_err(|error| format!("创建桌面代理失败: {error}"))?;
+        let proxy =
+            Proxy::all(proxy_url.as_str()).map_err(|error| format!("创建桌面代理失败: {error}"))?;
         builder = builder.proxy(proxy);
     }
 
@@ -445,8 +461,8 @@ fn fetch_published_desktop_update_info() -> Result<DesktopPublishedUpdateInfo, S
         .read_to_string(&mut body)
         .map_err(|error| format!("读取更新清单失败: {error}"))?;
 
-    let manifest =
-        serde_json::from_str::<UpdaterManifest>(&body).map_err(|error| format!("解析更新清单失败: {error}"))?;
+    let manifest = serde_json::from_str::<UpdaterManifest>(&body)
+        .map_err(|error| format!("解析更新清单失败: {error}"))?;
 
     Ok(DesktopPublishedUpdateInfo {
         version: manifest.version,
@@ -552,11 +568,7 @@ fn split_file_name(file_name: &str) -> (String, String) {
     (stem, ext)
 }
 
-fn resolve_telegram_destination(
-    root_dir: &Path,
-    file_name: &str,
-    source_url: &str,
-) -> PathBuf {
+fn resolve_telegram_destination(root_dir: &Path, file_name: &str, source_url: &str) -> PathBuf {
     let telegram_root = root_dir.join("telegram");
     let sanitized_file_name = sanitize_path_component(file_name);
     let preferred = telegram_root.join(&sanitized_file_name);
@@ -578,8 +590,8 @@ fn resolve_telegram_destination(
             return candidate;
         }
 
-        let existing_hash = read_telegram_download_identity(&candidate)
-            .map(|identity| identity.source_hash);
+        let existing_hash =
+            read_telegram_download_identity(&candidate).map(|identity| identity.source_hash);
         if existing_hash.as_deref() == Some(source_hash.as_str()) {
             return candidate;
         }
@@ -603,8 +615,7 @@ fn resolve_transfer_destination(
 }
 
 fn default_downloads_root_dir() -> Result<PathBuf, String> {
-    let download_dir =
-        dirs::download_dir().ok_or_else(|| "无法定位系统下载目录".to_string())?;
+    let download_dir = dirs::download_dir().ok_or_else(|| "无法定位系统下载目录".to_string())?;
     Ok(download_dir.join("MistRelay"))
 }
 
@@ -667,7 +678,8 @@ fn download_to_path(source_url: &str, destination: &Path) -> Result<(), String> 
     let mut temp_file =
         fs::File::create(&temp_path).map_err(|error| format!("创建临时文件失败: {error}"))?;
 
-    io::copy(&mut response, &mut temp_file).map_err(|error| format!("写入本地文件失败: {error}"))?;
+    io::copy(&mut response, &mut temp_file)
+        .map_err(|error| format!("写入本地文件失败: {error}"))?;
 
     if destination.exists() {
         fs::remove_file(destination).map_err(|error| format!("覆盖旧文件失败: {error}"))?;
@@ -746,6 +758,129 @@ fn reset_transfer_for_retry(handle: &TransferHandle) -> Result<(), String> {
     Ok(())
 }
 
+fn is_transfer_terminal(handle: &TransferHandle) -> Result<bool, String> {
+    let (lock, _) = &*handle.inner;
+    let progress = lock.lock().map_err(|_| "状态已损坏".to_string())?;
+    Ok(progress.complete || progress.cancelled || progress.error.is_some())
+}
+
+fn has_session_reference(
+    sessions: &Mutex<HashMap<String, Arc<TransferHandle>>>,
+    handle: &Arc<TransferHandle>,
+    lock_error: &str,
+) -> Result<bool, String> {
+    Ok(sessions
+        .lock()
+        .map_err(|_| lock_error.to_string())?
+        .values()
+        .any(|candidate| Arc::ptr_eq(candidate, handle)))
+}
+
+fn drop_transfer_if_unused(
+    transfers: &Mutex<HashMap<String, Arc<TransferHandle>>>,
+    transfer_key: &str,
+    handle: &Arc<TransferHandle>,
+    lock_error: &str,
+) -> Result<(), String> {
+    let mut transfers = transfers.lock().map_err(|_| lock_error.to_string())?;
+    let should_remove = transfers
+        .get(transfer_key)
+        .map(|candidate| Arc::ptr_eq(candidate, handle))
+        .unwrap_or(false);
+    if should_remove {
+        transfers.remove(transfer_key);
+    }
+    Ok(())
+}
+
+fn take_download_session(
+    state: &DesktopRuntimeState,
+    transfer_id: &str,
+) -> Result<Arc<TransferHandle>, String> {
+    state
+        .download_sessions
+        .lock()
+        .map_err(|_| "本地下载会话已损坏".to_string())?
+        .remove(transfer_id)
+        .ok_or_else(|| "未找到本地下载任务".to_string())
+}
+
+fn release_download_session(
+    state: &DesktopRuntimeState,
+    transfer_id: &str,
+) -> Result<Arc<TransferHandle>, String> {
+    let handle = take_download_session(state, transfer_id)?;
+    let transfer_key = handle.local_path.to_string_lossy().to_string();
+
+    if !has_session_reference(&state.download_sessions, &handle, "本地下载会话已损坏")? {
+        drop_transfer_if_unused(
+            &state.download_transfers,
+            &transfer_key,
+            &handle,
+            "本地下载状态已损坏",
+        )?;
+    }
+
+    Ok(handle)
+}
+
+fn release_preview_session(
+    state: &DesktopRuntimeState,
+    transfer_id: &str,
+) -> Result<Arc<TransferHandle>, String> {
+    let handle = state
+        .preview_sessions
+        .lock()
+        .map_err(|_| "本地预览会话已损坏".to_string())?
+        .remove(transfer_id)
+        .ok_or_else(|| "未找到本地预览任务".to_string())?;
+    let transfer_key = handle.local_path.to_string_lossy().to_string();
+
+    if !has_session_reference(&state.preview_sessions, &handle, "本地预览会话已损坏")? {
+        drop_transfer_if_unused(
+            &state.preview_transfers,
+            &transfer_key,
+            &handle,
+            "本地预览缓存状态已损坏",
+        )?;
+    }
+
+    Ok(handle)
+}
+
+fn get_or_create_download_handle(
+    state: &DesktopRuntimeState,
+    file_name: String,
+    source_url: String,
+    destination: PathBuf,
+) -> Result<Arc<TransferHandle>, String> {
+    let transfer_key = destination.to_string_lossy().to_string();
+    let existing = state
+        .download_transfers
+        .lock()
+        .map_err(|_| "本地下载状态已损坏".to_string())?
+        .get(&transfer_key)
+        .cloned();
+
+    if let Some(existing) = existing {
+        if !is_transfer_terminal(&existing)? {
+            return Ok(existing);
+        }
+    }
+
+    let handle = Arc::new(TransferHandle::new_download(
+        file_name,
+        source_url,
+        destination,
+    ));
+    state
+        .download_transfers
+        .lock()
+        .map_err(|_| "本地下载状态已损坏".to_string())?
+        .insert(transfer_key, Arc::clone(&handle));
+    Ok(handle)
+}
+
 fn spawn_transfer(
     handle: Arc<TransferHandle>,
     limiter: Option<Arc<ConcurrencyLimiter>>,
@@ -764,9 +899,7 @@ fn spawn_transfer(
             Err(error)
         } else {
             match handle.kind {
-                TransferKind::Download if threads > 1 => {
-                    multi_thread_download(&handle, threads)
-                }
+                TransferKind::Download if threads > 1 => multi_thread_download(&handle, threads),
                 _ => stream_transfer_to_path(&handle),
             }
         };
@@ -857,7 +990,8 @@ fn stream_transfer_to_path(handle: &TransferHandle) -> Result<(), String> {
         let mut progress = lock.lock().map_err(|_| "缓存状态已损坏".to_string())?;
         progress.downloaded_bytes += read as u64;
         progress.ready_for_preview = matches!(handle.kind, TransferKind::Preview)
-            && (progress.complete || progress.downloaded_bytes >= preview_ready_threshold(progress.total_bytes));
+            && (progress.complete
+                || progress.downloaded_bytes >= preview_ready_threshold(progress.total_bytes));
         condvar.notify_all();
     }
 
@@ -896,28 +1030,28 @@ fn multi_thread_download(handle: &TransferHandle, num_threads: u32) -> Result<()
 
     let client = build_http_client()?;
     let (accepts_ranges, total_size, server_min_threads) =
-        probe_multi_download_capability(&client, &handle.source_url)?;
+        match probe_multi_download_capability(&client, &handle.source_url) {
+            Ok(capability) => capability,
+            Err(_) => return stream_transfer_to_path(handle),
+        };
 
     if !accepts_ranges {
-        return Err("当前下载源不支持 Range，无法执行强制多连接下载".to_string());
+        return stream_transfer_to_path(handle);
     }
 
     if total_size.is_none() {
-        return Err("当前下载源未返回文件大小，无法执行强制多连接下载".to_string());
+        return stream_transfer_to_path(handle);
     }
 
     let total = total_size.unwrap();
     if total == 0 {
-        return Err("当前下载源返回的文件大小为 0，无法执行多连接下载".to_string());
+        return stream_transfer_to_path(handle);
     }
 
     let requested_threads = num_threads.max(server_min_threads) as u64;
     let effective_threads = requested_threads.min(total);
     if effective_threads < server_min_threads as u64 {
-        return Err(format!(
-            "文件过小，无法满足至少 {} 个并发连接的下载要求",
-            server_min_threads
-        ));
+        return stream_transfer_to_path(handle);
     }
     let effective_threads = effective_threads as u32;
 
@@ -928,8 +1062,7 @@ fn multi_thread_download(handle: &TransferHandle, num_threads: u32) -> Result<()
         condvar.notify_all();
     }
 
-    let file = fs::File::create(&handle.local_path)
-        .map_err(|e| format!("创建文件失败: {e}"))?;
+    let file = fs::File::create(&handle.local_path).map_err(|e| format!("创建文件失败: {e}"))?;
     file.set_len(total)
         .map_err(|e| format!("预分配文件空间失败: {e}"))?;
     drop(file);
@@ -982,6 +1115,10 @@ fn multi_thread_download(handle: &TransferHandle, num_threads: u32) -> Result<()
         return Err(error);
     }
 
+    if let Some(source_hash) = extract_telegram_source_hash(&handle.source_url) {
+        write_telegram_download_identity(&handle.local_path, &source_hash)?;
+    }
+
     let (lock, condvar) = &*handle.inner;
     let mut progress = lock.lock().map_err(|_| "状态已损坏".to_string())?;
     progress.downloaded_bytes = total;
@@ -1015,8 +1152,24 @@ fn download_chunk(
         .map_err(|e| format!("分片下载失败: {e}"))?;
 
     let status = response.status();
-    if status != StatusCode::PARTIAL_CONTENT && status != StatusCode::OK {
+    if status != StatusCode::PARTIAL_CONTENT {
         return Err(format!("分片下载失败: 服务返回 {status}"));
+    }
+    let expected_bytes = end
+        .checked_sub(start)
+        .and_then(|value| value.checked_add(1))
+        .ok_or_else(|| "分片范围无效".to_string())?;
+    let content_range = response
+        .headers()
+        .get(header::CONTENT_RANGE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(parse_content_range_bounds)
+        .ok_or_else(|| "分片下载失败: 服务未返回有效的 Content-Range".to_string())?;
+    if content_range.0 != start || content_range.1 != end {
+        return Err(format!(
+            "分片下载失败: 返回范围 {}-{} 与请求范围 {}-{} 不一致",
+            content_range.0, content_range.1, start, end
+        ));
     }
 
     let mut file = fs::OpenOptions::new()
@@ -1027,6 +1180,7 @@ fn download_chunk(
         .map_err(|e| format!("定位文件失败: {e}"))?;
 
     let mut buffer = [0_u8; 64 * 1024];
+    let mut received_bytes = 0_u64;
     loop {
         if cancel_requested.load(Ordering::SeqCst) {
             return Err(TRANSFER_CANCELLED_ERROR.to_string());
@@ -1037,6 +1191,12 @@ fn download_chunk(
             .map_err(|e| format!("读取分片数据失败: {e}"))?;
         if read == 0 {
             break;
+        }
+        received_bytes = received_bytes
+            .checked_add(read as u64)
+            .ok_or_else(|| "分片下载失败: 字节数溢出".to_string())?;
+        if received_bytes > expected_bytes {
+            return Err("分片下载失败: 服务返回的数据超出请求范围".to_string());
         }
 
         file.write_all(&buffer[..read])
@@ -1055,31 +1215,32 @@ fn download_chunk(
         }
     }
 
+    if received_bytes != expected_bytes {
+        return Err(format!(
+            "分片下载失败: 数据不完整，期望 {} 字节，实际 {} 字节",
+            expected_bytes, received_bytes
+        ));
+    }
+
     Ok(())
 }
 
-fn spawn_progress_emitter(
-    app: tauri::AppHandle,
-    transfer_id: String,
-    handle: Arc<TransferHandle>,
-) {
-    thread::spawn(move || {
-        loop {
-            let status = match snapshot_transfer_status(&transfer_id, &handle) {
-                Ok(s) => s,
-                Err(_) => break,
-            };
+fn spawn_progress_emitter(app: tauri::AppHandle, transfer_id: String, handle: Arc<TransferHandle>) {
+    thread::spawn(move || loop {
+        let status = match snapshot_transfer_status(&transfer_id, &handle) {
+            Ok(s) => s,
+            Err(_) => break,
+        };
 
-            let is_terminal =
-                status.state == "completed" || status.state == "error" || status.state == "cancelled";
-            let _ = app.emit("desktop-transfer-progress", &status);
+        let is_terminal =
+            status.state == "completed" || status.state == "error" || status.state == "cancelled";
+        let _ = app.emit("desktop-transfer-progress", &status);
 
-            if is_terminal {
-                break;
-            }
-
-            thread::sleep(TRANSFER_PROGRESS_EMIT_INTERVAL);
+        if is_terminal {
+            break;
         }
+
+        thread::sleep(TRANSFER_PROGRESS_EMIT_INTERVAL);
     });
 }
 
@@ -1117,7 +1278,10 @@ fn refresh_download_speed(progress: &mut TransferProgress) {
     }
 }
 
-fn snapshot_transfer_status(transfer_id: &str, handle: &TransferHandle) -> Result<DesktopTransferStatus, String> {
+fn snapshot_transfer_status(
+    transfer_id: &str,
+    handle: &TransferHandle,
+) -> Result<DesktopTransferStatus, String> {
     let (lock, _) = &*handle.inner;
     let mut progress = lock.lock().map_err(|_| "缓存状态已损坏".to_string())?;
     refresh_download_speed(&mut progress);
@@ -1161,7 +1325,10 @@ fn snapshot_transfer_status(transfer_id: &str, handle: &TransferHandle) -> Resul
     })
 }
 
-fn wait_for_available_bytes(handle: &TransferHandle, needed_bytes: u64) -> Result<TransferProgress, String> {
+fn wait_for_available_bytes(
+    handle: &TransferHandle,
+    needed_bytes: u64,
+) -> Result<TransferProgress, String> {
     let (lock, condvar) = &*handle.inner;
     let mut progress = lock.lock().map_err(|_| "缓存状态已损坏".to_string())?;
 
@@ -1229,7 +1396,11 @@ fn send_http_headers(
         .map_err(|error| format!("写入本地流响应头失败: {error}"))
 }
 
-fn send_simple_response(stream: &mut TcpStream, status_line: &str, body: &str) -> Result<(), String> {
+fn send_simple_response(
+    stream: &mut TcpStream,
+    status_line: &str,
+    body: &str,
+) -> Result<(), String> {
     let response = format!(
         "HTTP/1.1 {status_line}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
         body.as_bytes().len(),
@@ -1388,7 +1559,9 @@ fn handle_preview_connection(
         );
     }
 
-    let end = requested_end.unwrap_or(total_bytes.saturating_sub(1)).min(total_bytes - 1);
+    let end = requested_end
+        .unwrap_or(total_bytes.saturating_sub(1))
+        .min(total_bytes - 1);
     let content_length = end - start + 1;
     let is_partial = range_header.is_some();
     let status_line = if is_partial {
@@ -1402,7 +1575,13 @@ fn handle_preview_connection(
         None
     };
 
-    send_http_headers(&mut stream, status_line, &mime, content_length, content_range)?;
+    send_http_headers(
+        &mut stream,
+        status_line,
+        &mime,
+        content_length,
+        content_range,
+    )?;
 
     if method == "HEAD" {
         return Ok(());
@@ -1482,7 +1661,9 @@ async fn pick_desktop_download_dir(
         dialog = dialog.set_directory(initial_dir);
     }
 
-    Ok(dialog.blocking_pick_folder().and_then(dialog_file_path_to_string))
+    Ok(dialog
+        .blocking_pick_folder()
+        .and_then(dialog_file_path_to_string))
 }
 
 #[tauri::command]
@@ -1542,26 +1723,8 @@ fn desktop_start_download(
         &file_name,
         &source_url,
     );
-    let transfer_key = destination.to_string_lossy().to_string();
-
-    let handle = {
-        let mut transfers = state
-            .download_transfers
-            .lock()
-            .map_err(|_| "本地下载状态已损坏".to_string())?;
-
-        if let Some(existing) = transfers.get(&transfer_key) {
-            Arc::clone(existing)
-        } else {
-            let handle = Arc::new(TransferHandle::new_download(
-                file_name.clone(),
-                source_url,
-                destination.clone(),
-            ));
-            transfers.insert(transfer_key, Arc::clone(&handle));
-            handle
-        }
-    };
+    let handle =
+        get_or_create_download_handle(&state, file_name.clone(), source_url, destination.clone())?;
 
     let threads = *state
         .threads_per_download
@@ -1613,9 +1776,11 @@ async fn desktop_download_file(
     );
     let destination_for_task = destination.clone();
 
-    tauri::async_runtime::spawn_blocking(move || download_to_path(&source_url, &destination_for_task))
-        .await
-        .map_err(|error| format!("桌面下载任务失败: {error}"))??;
+    tauri::async_runtime::spawn_blocking(move || {
+        download_to_path(&source_url, &destination_for_task)
+    })
+    .await
+    .map_err(|error| format!("桌面下载任务失败: {error}"))??;
 
     Ok(DesktopTransferResult {
         file_name,
@@ -1712,7 +1877,10 @@ fn desktop_start_preview_stream(
 
     Ok(DesktopPreviewSession {
         transfer_id: transfer_id.clone(),
-        stream_url: format!("http://127.0.0.1:{}/preview/{}", state.preview_server_port, transfer_id),
+        stream_url: format!(
+            "http://127.0.0.1:{}/preview/{}",
+            state.preview_server_port, transfer_id
+        ),
         local_path: destination.to_string_lossy().to_string(),
         ready_for_preview: status.ready_for_preview,
     })
@@ -1775,6 +1943,22 @@ fn desktop_cancel_download(
 }
 
 #[tauri::command]
+fn desktop_remove_download_session(
+    state: tauri::State<'_, DesktopRuntimeState>,
+    transfer_id: String,
+) -> Result<(), String> {
+    let handle = get_download_handle(&state, &transfer_id)?;
+    let status = snapshot_transfer_status(&transfer_id, &handle)?;
+    match status.state.as_str() {
+        "completed" | "error" | "cancelled" => {}
+        _ => return Err("只有已结束任务可以删除".to_string()),
+    }
+
+    let _ = release_download_session(&state, &transfer_id)?;
+    Ok(())
+}
+
+#[tauri::command]
 fn desktop_retry_download(
     app: tauri::AppHandle,
     state: tauri::State<'_, DesktopRuntimeState>,
@@ -1805,6 +1989,29 @@ fn desktop_retry_download(
     spawn_progress_emitter(app, transfer_id.clone(), Arc::clone(&handle));
 
     snapshot_transfer_status(&transfer_id, &handle)
+}
+
+#[tauri::command]
+fn desktop_cancel_preview(
+    state: tauri::State<'_, DesktopRuntimeState>,
+    transfer_id: String,
+) -> Result<(), String> {
+    let handle = state
+        .preview_sessions
+        .lock()
+        .map_err(|_| "本地预览会话已损坏".to_string())?
+        .get(&transfer_id)
+        .cloned()
+        .ok_or_else(|| "未找到本地预览任务".to_string())?;
+    let terminal = is_transfer_terminal(&handle)?;
+    if !terminal {
+        handle.cancel_requested.store(true, Ordering::SeqCst);
+        let (_, condvar) = &*handle.inner;
+        condvar.notify_all();
+    }
+
+    let _ = release_preview_session(&state, &transfer_id)?;
+    Ok(())
 }
 
 fn spawn_system_command(command: &mut Command, action: &str) -> Result<(), String> {
@@ -1910,8 +2117,8 @@ fn desktop_get_published_update_info() -> Result<DesktopPublishedUpdateInfo, Str
 
 fn main() {
     let mut context = tauri::generate_context!();
-    let runtime_state = DesktopRuntimeState::new()
-        .expect("failed to start local desktop preview runtime");
+    let runtime_state =
+        DesktopRuntimeState::new().expect("failed to start local desktop preview runtime");
 
     match load_desktop_client_config() {
         Ok(config) => {
@@ -1945,7 +2152,9 @@ fn main() {
             desktop_start_preview_stream,
             desktop_get_transfer_status,
             desktop_cancel_download,
+            desktop_remove_download_session,
             desktop_retry_download,
+            desktop_cancel_preview,
             desktop_open_local_file,
             desktop_show_local_file_in_folder,
             desktop_get_published_update_info

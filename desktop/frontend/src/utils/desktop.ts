@@ -142,8 +142,16 @@ export async function cancelDesktopDownload(transferId: string): Promise<Desktop
   return invokeDesktopCommand<DesktopTransferStatus>('desktop_cancel_download', { transferId })
 }
 
+export async function removeDesktopDownloadSession(transferId: string): Promise<void> {
+  await invokeDesktopCommand('desktop_remove_download_session', { transferId })
+}
+
 export async function retryDesktopDownload(transferId: string): Promise<DesktopTransferStatus> {
   return invokeDesktopCommand<DesktopTransferStatus>('desktop_retry_download', { transferId })
+}
+
+export async function cancelDesktopPreview(transferId: string): Promise<void> {
+  await invokeDesktopCommand('desktop_cancel_preview', { transferId })
 }
 
 export async function openDesktopLocalFile(localPath: string): Promise<void> {

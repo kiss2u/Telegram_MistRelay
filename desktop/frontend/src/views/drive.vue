@@ -481,6 +481,7 @@ import { HomeFilled, Document, Folder, Search, List, Grid, Picture, VideoPlay, S
 import { getRcloneRemotes, browseDrive, getThumbnail, deleteFile, getDriveUsage, browseTelegram, getTelegramUsage, deleteTelegramItem, deleteTelegramGroup, clearTelegramMedia, type RcloneRemote, type DriveItem, type DriveUsageResponse, type TelegramMediaItem, type TelegramUsageStats } from '@/api'
 import VideoPlayer from '@/components/VideoPlayer.vue'
 import {
+  cancelDesktopPreview,
   getDesktopTransferStatus,
   prepareDesktopPreviewFile,
   startDesktopPreviewStream,
@@ -1251,7 +1252,7 @@ async function handleDownload(item: DriveItem) {
     remote: isTelegramMode.value ? 'telegram' : currentRemote.value,
     remotePath: item.path,
     fileName: item.name,
-    pathKey: item.path,
+    pathKey: `${isTelegramMode.value ? 'telegram' : currentRemote.value}:${item.path}`,
   })
 
   if (queued) {
@@ -1406,6 +1407,7 @@ const previewType = ref<'image' | 'video' | 'unknown'>('unknown')
 const previewUrl = ref('')
 const previewLoading = ref(false)
 const previewTransferStatus = ref<DesktopTransferStatus | null>(null)
+const previewTransferId = ref('')
 let previewRequestToken = 0
 
 const previewProgressPercent = computed(() => {
@@ -1468,6 +1470,14 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => window.setTimeout(resolve, ms))
 }
 
+async function cancelPreviewSession(transferId: string): Promise<void> {
+  try {
+    await cancelDesktopPreview(transferId)
+  } catch (err) {
+    console.error('释放本地预览会话失败:', err)
+  }
+}
+
 async function waitForPreviewReady(transferId: string, token: number): Promise<void> {
   while (token === previewRequestToken && showPreview.value) {
     const status = await getDesktopTransferStatus(transferId)
@@ -1497,6 +1507,7 @@ async function handleRowClick(row: DriveItem) {
     if (isImage(row.name)) {
       previewType.value = 'image'
       previewItem.value = row
+      previewTransferId.value = ''
       previewLoading.value = true
       try {
         previewUrl.value = await preparePreviewSource(row)
@@ -1513,6 +1524,7 @@ async function handleRowClick(row: DriveItem) {
       previewItem.value = row
       previewUrl.value = ''
       previewTransferStatus.value = null
+      previewTransferId.value = ''
       showPreview.value = true
       previewLoading.value = true
       const token = ++previewRequestToken
@@ -1524,14 +1536,17 @@ async function handleRowClick(row: DriveItem) {
           remotePath: row.path,
           fileName: row.name,
         })
+        previewTransferId.value = session.transferId
 
         if (token !== previewRequestToken || !showPreview.value) {
+          await cancelPreviewSession(session.transferId)
           return
         }
 
         await waitForPreviewReady(session.transferId, token)
 
         if (token !== previewRequestToken || !showPreview.value) {
+          await cancelPreviewSession(session.transferId)
           return
         }
 
@@ -1555,6 +1570,7 @@ async function handleRowClick(row: DriveItem) {
 
 // 关闭预览
 function closePreview() {
+  const transferId = previewTransferId.value
   previewRequestToken += 1
   showPreview.value = false
   previewItem.value = null
@@ -1562,6 +1578,11 @@ function closePreview() {
   previewType.value = 'unknown'
   previewLoading.value = false
   previewTransferStatus.value = null
+  previewTransferId.value = ''
+
+  if (transferId) {
+    void cancelPreviewSession(transferId)
+  }
 }
 
 // 导航到路径

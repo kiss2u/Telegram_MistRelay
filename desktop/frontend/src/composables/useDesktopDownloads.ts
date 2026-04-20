@@ -3,6 +3,7 @@ import { ElMessage } from 'element-plus'
 import {
   cancelDesktopDownload,
   openDesktopLocalFile,
+  removeDesktopDownloadSession,
   retryDesktopDownload,
   showDesktopLocalFileInFolder,
   startDesktopDownload,
@@ -208,34 +209,47 @@ async function showDesktopDownloadInFolder(localPath: string): Promise<void> {
   }
 }
 
-function removeDesktopDownload(transferId: string): void {
+function applyLocalDownloadRemoval(transferIds: string[]): void {
+  if (!transferIds.length) return
+
   const nextStatuses = { ...desktopDownloadStatuses.value }
-  const pathKey = transferPathKeys[transferId]
+  const nextDownloadingPaths = { ...downloadingPaths.value }
 
-  delete nextStatuses[transferId]
+  transferIds.forEach((transferId) => {
+    const pathKey = transferPathKeys[transferId]
+    delete nextStatuses[transferId]
+    delete transferPathKeys[transferId]
+    notifiedTransfers.delete(transferId)
+
+    if (pathKey && !Object.values(transferPathKeys).includes(pathKey)) {
+      delete nextDownloadingPaths[pathKey]
+    }
+  })
+
   desktopDownloadStatuses.value = nextStatuses
-  delete transferPathKeys[transferId]
-  notifiedTransfers.delete(transferId)
-
-  if (pathKey && !Object.values(transferPathKeys).includes(pathKey)) {
-    const nextDownloadingPaths = { ...downloadingPaths.value }
-    delete nextDownloadingPaths[pathKey]
-    downloadingPaths.value = nextDownloadingPaths
-  }
+  downloadingPaths.value = nextDownloadingPaths
 }
 
-function clearDesktopDownloads(mode: 'completed' | 'failed' | 'all'): void {
-  const entries = Object.entries(desktopDownloadStatuses.value)
-  const remaining = Object.fromEntries(entries.filter(([, task]) => {
-    if (mode === 'all') {
-      return !isDesktopDownloadTerminal(task)
-    }
-    if (mode === 'completed') {
-      return task.state !== 'completed'
-    }
-    return task.state !== 'error' && task.state !== 'cancelled'
-  }))
+function isMissingDownloadSessionError(message: string): boolean {
+  return message.includes('未找到本地下载任务')
+}
 
+async function removeDesktopDownload(transferId: string): Promise<void> {
+  try {
+    await removeDesktopDownloadSession(transferId)
+  } catch (err: any) {
+    const message = err?.message || '删除下载任务失败'
+    if (!isMissingDownloadSessionError(message)) {
+      ElMessage.error(message)
+      return
+    }
+  }
+
+  applyLocalDownloadRemoval([transferId])
+}
+
+async function clearDesktopDownloads(mode: 'completed' | 'failed' | 'all'): Promise<void> {
+  const entries = Object.entries(desktopDownloadStatuses.value)
   const removedIds = entries
     .filter(([, task]) => {
       if (mode === 'all') {
@@ -247,18 +261,30 @@ function clearDesktopDownloads(mode: 'completed' | 'failed' | 'all'): void {
     })
     .map(([transferId]) => transferId)
 
-  desktopDownloadStatuses.value = remaining
-  removedIds.forEach((transferId) => {
-    const pathKey = transferPathKeys[transferId]
-    delete transferPathKeys[transferId]
-    notifiedTransfers.delete(transferId)
+  if (!removedIds.length) return
 
-    if (pathKey && !Object.values(transferPathKeys).includes(pathKey)) {
-      const nextDownloadingPaths = { ...downloadingPaths.value }
-      delete nextDownloadingPaths[pathKey]
-      downloadingPaths.value = nextDownloadingPaths
+  const removableIds: string[] = []
+  const failedMessages: string[] = []
+
+  for (const transferId of removedIds) {
+    try {
+      await removeDesktopDownloadSession(transferId)
+      removableIds.push(transferId)
+    } catch (err: any) {
+      const message = err?.message || '删除下载任务失败'
+      if (isMissingDownloadSessionError(message)) {
+        removableIds.push(transferId)
+      } else {
+        failedMessages.push(message)
+      }
     }
-  })
+  }
+
+  applyLocalDownloadRemoval(removableIds)
+
+  if (failedMessages.length > 0) {
+    ElMessage.error(failedMessages[0])
+  }
 }
 
 async function startTrackedDesktopDownload(params: StartDesktopDownloadParams): Promise<boolean> {
