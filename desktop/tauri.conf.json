@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "MistRelay",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "identifier": "com.mistrelay.desktop",
   "build": {
     "beforeDevCommand": "npm run frontend:dev",
@@ -56,7 +56,10 @@
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDU4N0IwNDc1OTVDODlCRTEKUldUaG04aVZkUVI3V0tRSVdmaFFQUE5ycFdMYVk0SmFJOHVaS0ZxRlhQY2RERFlVUEhUWi9OZjYK",
       "endpoints": [
         "https://github.com/qianlong520/Telegram_MistRelay/releases/latest/download/latest.json"
-      ]
+      ],
+      "windows": {
+        "installMode": "quiet"
+      }
     }
   }
 }

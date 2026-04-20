@@ -946,7 +946,7 @@ async function handleInstallUpdate() {
 
   try {
     await ElMessageBox.confirm(
-      `确定要更新到 v${updateVersion.value} 吗？更新完成后客户端将自动重启。`,
+      `确定要更新到 v${updateVersion.value} 吗？更新完成后客户端会自动关闭，静默完成更新并重新启动。`,
       '确认更新',
       {
         confirmButtonText: '立即更新',
@@ -969,7 +969,7 @@ async function handleInstallUpdate() {
         updateProgressPercent.value = Math.round((progress.downloaded / progress.total) * 100)
       }
       if (progress.done) {
-        updateStatusText.value = '下载完成，正在安装并重启…'
+        updateStatusText.value = '下载完成，正在静默更新并重启…'
       }
     })
   } catch (err: any) {
