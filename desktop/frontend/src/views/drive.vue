@@ -3,72 +3,19 @@
     <el-card shadow="hover">
       <template #header>
         <div class="drive-header">
-          <div v-if="availableRemotes.length > 0" class="drive-header-tools">
-            <el-select
-              v-model="currentRemote"
-              @change="handleRemoteChange"
-              placeholder="选择云存储"
-              class="header-remote-select"
-              popper-class="drive-remote-popper"
-              fit-input-width
-            >
-              <el-option
-                v-for="remote in availableRemotes"
-                :key="remote.name"
-                :label="remote.name === TELEGRAM_REMOTE_NAME ? 'Telegram 频道' : remote.name"
-                :value="remote.name"
-              >
-                <div class="remote-option">
-                  <div class="remote-option-head">
-                    <span class="remote-option-name">{{ remote.name === TELEGRAM_REMOTE_NAME ? 'Telegram 频道' : remote.name }}</span>
-                    <el-tag size="small" effect="plain" round>{{ remote.type }}</el-tag>
-                  </div>
-                  <div class="remote-option-meta">
-                    <template v-if="remote.name === TELEGRAM_REMOTE_NAME">
-                      <span>{{ telegramUsage ? formatBytes(telegramUsage.total_size) + ' · ' + telegramUsage.total_count + ' 个文件' : '加载中...' }}</span>
-                    </template>
-                    <template v-else>
-                      <span>{{ getRemoteUsageSummary(remote.name) }}</span>
-                      <span v-if="getRemoteUsagePercent(remote.name) !== null" class="remote-option-percent">
-                        {{ getRemoteUsagePercent(remote.name)!.toFixed(0) }}%
-                      </span>
-                    </template>
-                  </div>
-                </div>
-              </el-option>
-            </el-select>
-
-            <div v-if="currentRemote" class="header-usage">
-              <template v-if="isTelegramMode">
-                <template v-if="loadingTelegramUsage">
-                  <span class="header-usage-text">容量读取中...</span>
-                </template>
-                <template v-else-if="telegramUsage">
-                  <span class="header-usage-name">Telegram 频道</span>
-                  <span class="header-usage-text">{{ formatBytes(telegramUsage.total_size) }} · {{ telegramUsage.total_count }} 个文件</span>
-                  <el-tag size="small" round effect="plain">
-                    {{ telegramUsage.videos }} 视频 · {{ telegramUsage.images }} 图片
-                  </el-tag>
-                </template>
-                <el-button :icon="RefreshRight" circle size="small" @click="loadTelegramUsage(true)" :loading="loadingTelegramUsage" />
+          <div class="drive-header-tools">
+            <div class="header-usage">
+              <template v-if="loadingTelegramUsage">
+                <span class="header-usage-text">容量读取中...</span>
               </template>
-              <template v-else>
-                <template v-if="loadingDriveUsage">
-                  <span class="header-usage-text">容量读取中...</span>
-                </template>
-                <template v-else-if="driveUsage?.supported && driveUsage.data">
-                  <span class="header-usage-name">{{ currentRemote }}</span>
-                  <span class="header-usage-text">{{ formatBytes(driveUsage.data.used) }} / {{ formatBytes(driveUsage.data.total) }}</span>
-                  <el-tag size="small" round :type="usagePercent >= 90 ? 'danger' : usagePercent >= 75 ? 'warning' : 'success'">
-                    {{ usagePercent.toFixed(1) }}%
-                  </el-tag>
-                </template>
-                <template v-else>
-                  <span class="header-usage-name">{{ currentRemote }}</span>
-                  <span class="header-usage-text">{{ driveUsage?.error || '暂不支持容量统计' }}</span>
-                </template>
-                <el-button :icon="RefreshRight" circle size="small" @click="loadDriveUsage(true, true)" :loading="loadingDriveUsage" />
+              <template v-else-if="telegramUsage">
+                <span class="header-usage-name">Telegram 频道</span>
+                <span class="header-usage-text">{{ formatBytes(telegramUsage.total_size) }} · {{ telegramUsage.total_count }} 个文件</span>
+                <el-tag size="small" round effect="plain">
+                  {{ telegramUsage.videos }} 视频 · {{ telegramUsage.images }} 图片
+                </el-tag>
               </template>
+              <el-button :icon="RefreshRight" circle size="small" @click="loadTelegramUsage(true)" :loading="loadingTelegramUsage" />
             </div>
           </div>
         </div>
@@ -86,13 +33,13 @@
           </el-button>
 
           <div class="drive-breadcrumb-card">
-            <el-breadcrumb separator="/">
-              <el-breadcrumb-item @click="navigateToPath('/')">
-                <el-icon><HomeFilled /></el-icon>
-                {{ isTelegramMode ? 'Telegram 频道' : '根目录' }}
-              </el-breadcrumb-item>
-              <el-breadcrumb-item
-                v-for="segment in breadcrumbSegments"
+              <el-breadcrumb separator="/">
+                <el-breadcrumb-item @click="navigateToPath('/')">
+                  <el-icon><HomeFilled /></el-icon>
+                  Telegram 频道
+                </el-breadcrumb-item>
+                <el-breadcrumb-item
+                  v-for="segment in breadcrumbSegments"
                 :key="segment.path"
                 @click="navigateToPath(segment.path)"
               >
@@ -171,7 +118,7 @@
             <div>
               <div class="tg-stream-title">文件流</div>
               <div class="tg-stream-subtitle">
-                {{ isTelegramMode ? 'Telegram 频道' : (currentRemote || '未选择存储') }} · {{ quickFilterOptions.find(item => item.key === currentFilter)?.label || '全部' }} · {{ visibleItemCount }} 项
+                Telegram 频道 · {{ quickFilterOptions.find(item => item.key === currentFilter)?.label || '全部' }} · {{ visibleItemCount }} 项
               </div>
             </div>
             <el-tag round effect="plain">
@@ -367,7 +314,7 @@
           </div>
 
           <div class="tg-inspector-meta">
-            <template v-if="isTelegramMode && !selectedItem.isDir && telegramItemMeta[selectedItem.path]">
+            <template v-if="!selectedItem.isDir && telegramItemMeta[selectedItem.path]">
               <div v-if="telegramItemMeta[selectedItem.path].caption" class="tg-inspector-meta-row tg-caption-row">
                 <span>说明</span>
                 <span>{{ telegramItemMeta[selectedItem.path].caption }}</span>
@@ -381,7 +328,7 @@
                 <span>{{ Math.floor(telegramItemMeta[selectedItem.path].duration! / 60) }}:{{ String(telegramItemMeta[selectedItem.path].duration! % 60).padStart(2, '0') }}</span>
               </div>
             </template>
-            <template v-if="isTelegramMode && selectedItem.isDir && telegramGroupMeta[selectedItem.path]">
+            <template v-if="selectedItem.isDir && telegramGroupMeta[selectedItem.path]">
               <div class="tg-inspector-meta-row">
                 <span>媒体组</span>
                 <span>{{ telegramGroupMeta[selectedItem.path].count }} 个文件</span>
@@ -391,10 +338,6 @@
                 <span>{{ formatBytes(telegramGroupMeta[selectedItem.path].size) }}</span>
               </div>
             </template>
-            <div v-if="!isTelegramMode" class="tg-inspector-meta-row">
-              <span>路径</span>
-              <span>{{ selectedItem.path }}</span>
-            </div>
             <div class="tg-inspector-meta-row">
               <span>时间</span>
               <span>{{ formatDate(selectedItem.modTime) }}</span>
@@ -405,7 +348,7 @@
             </div>
             <div class="tg-inspector-meta-row">
               <span>存储</span>
-              <span>{{ isTelegramMode ? 'Telegram 频道' : currentRemote }}</span>
+              <span>Telegram 频道</span>
             </div>
           </div>
         </aside>
@@ -466,8 +409,6 @@
           v-else-if="showPreview && previewType === 'video' && previewUrl"
           :src="previewUrl" 
           :type="getVideoType(previewItem?.name)"
-          :remote="currentRemote"
-          :path="previewItem?.path"
         />
       </div>
     </el-dialog>
@@ -478,7 +419,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { HomeFilled, Document, Folder, Search, List, Grid, Picture, VideoPlay, Sort, Download, Delete, RefreshRight, ArrowLeft } from '@element-plus/icons-vue'
-import { getRcloneRemotes, browseDrive, getThumbnail, deleteFile, getDriveUsage, browseTelegram, getTelegramUsage, deleteTelegramItem, deleteTelegramGroup, clearTelegramMedia, type RcloneRemote, type DriveItem, type DriveUsageResponse, type TelegramMediaItem, type TelegramUsageStats } from '@/api'
+import { getThumbnail, browseTelegram, getTelegramUsage, deleteTelegramItem, deleteTelegramGroup, clearTelegramMedia, type DriveItem, type TelegramMediaItem, type TelegramUsageStats } from '@/api'
 import VideoPlayer from '@/components/VideoPlayer.vue'
 import {
   cancelDesktopPreview,
@@ -489,14 +430,9 @@ import {
   type DesktopTransferStatus,
 } from '@/utils/desktop'
 import { useDesktopDownloads } from '@/composables/useDesktopDownloads'
-import { buildAuthorizedApiUrl, toAbsoluteServerUrl } from '@/utils/runtime'
+import { toAbsoluteServerUrl } from '@/utils/runtime'
 
 const { startTrackedDesktopDownload } = useDesktopDownloads()
-
-interface RemoteUsageState {
-  response?: DriveUsageResponse
-  loading: boolean
-}
 
 type QuickFilter = 'all' | 'folders' | 'videos' | 'images' | 'documents' | 'recent'
 
@@ -526,15 +462,13 @@ const telegramTotal = ref(0)
 const telegramUsage = ref<TelegramUsageStats | null>(null)
 const loadingTelegramUsage = ref(false)
 
-const isTelegramMode = computed(() => currentRemote.value === TELEGRAM_REMOTE_NAME)
+const isTelegramMode = computed(() => true)
 const TELEGRAM_GROUP_PATH_PREFIX = '/__tg_group__/'
 
-const availableRemotes = ref<RcloneRemote[]>([])
-const currentRemote = ref('')
+const currentRemote = ref(TELEGRAM_REMOTE_NAME)
 const currentPath = ref('/')
 const items = ref<DriveItem[]>([])
 const loading = ref(false)
-const remoteUsageStates = ref<Record<string, RemoteUsageState>>({})
 const currentFilter = ref<QuickFilter>('all')
 const selectedItemPath = ref('')
 
@@ -565,31 +499,6 @@ const currentSort = computed({
     sortBy.value = field as 'name' | 'time'
     sortDesc.value = order === 'desc'
   }
-})
-
-const currentRemoteInfo = computed(() => {
-  return availableRemotes.value.find(remote => remote.name === currentRemote.value) || null
-})
-
-const currentRemoteState = computed(() => {
-  if (!currentRemote.value) return null
-  return remoteUsageStates.value[currentRemote.value] || null
-})
-
-const driveUsage = computed(() => currentRemoteState.value?.response || null)
-const loadingDriveUsage = computed(() => currentRemoteState.value?.loading || false)
-
-const usagePercent = computed(() => {
-  const total = driveUsage.value?.data?.total
-  const used = driveUsage.value?.data?.used
-  if (!total || !used || total <= 0) return 0
-  return Math.min(100, Number(((used / total) * 100).toFixed(1)))
-})
-
-const usageProgressColor = computed(() => {
-  if (usagePercent.value >= 90) return '#ef4444'
-  if (usagePercent.value >= 75) return '#f59e0b'
-  return '#10b981'
 })
 
 // 计算属性
@@ -652,34 +561,16 @@ function matchesQuickFilter(item: DriveItem, filter: QuickFilter): boolean {
 }
 
 const quickFilterOptions = computed(() => {
-  if (isTelegramMode.value) {
-    const u = telegramUsage.value
-    return [
-      { key: 'all' as QuickFilter, label: '全部', description: '频道中的所有媒体文件', count: u?.total_count || 0 },
-      { key: 'videos' as QuickFilter, label: '视频', description: '在线播放和本地缓存优先', count: u?.videos || 0 },
-      { key: 'images' as QuickFilter, label: '图片', description: '快速预览图片资源', count: u?.images || 0 },
-      { key: 'documents' as QuickFilter, label: '文档', description: '压缩包、PDF 和普通文件', count: u?.documents || 0 },
-    ]
-  }
-
-  const definitions: Array<{ key: QuickFilter; label: string; description: string }> = [
-    { key: 'all', label: '全部', description: '像 Telegram 媒体页一样汇总当前目录' },
-    { key: 'folders', label: '文件夹', description: '先处理目录导航和归档' },
-    { key: 'videos', label: '视频', description: '在线播放和本地缓存优先' },
-    { key: 'images', label: '图片', description: '快速预览图片资源' },
-    { key: 'documents', label: '文档', description: '压缩包、PDF 和普通文件' },
-    { key: 'recent', label: '最近', description: '按时间倒序查看最近文件' },
+  const u = telegramUsage.value
+  return [
+    { key: 'all' as QuickFilter, label: '全部', description: '频道中的所有媒体文件', count: u?.total_count || 0 },
+    { key: 'videos' as QuickFilter, label: '视频', description: '在线播放和本地缓存优先', count: u?.videos || 0 },
+    { key: 'images' as QuickFilter, label: '图片', description: '快速预览图片资源', count: u?.images || 0 },
+    { key: 'documents' as QuickFilter, label: '文档', description: '压缩包、PDF 和普通文件', count: u?.documents || 0 },
   ]
-
-  return definitions.map(item => ({
-    ...item,
-    count: items.value.filter(file => matchesQuickFilter(file, item.key)).length,
-  }))
 })
 
 const telegramVisibleItems = computed(() => {
-  if (!isTelegramMode.value) return []
-
   const groupId = currentTelegramGroupId.value
   if (groupId) {
     return items.value.filter(item => telegramItemMeta.value[item.path]?.mediaGroupId === groupId)
@@ -728,56 +619,18 @@ const telegramVisibleItems = computed(() => {
 })
 
 const filteredItems = computed(() => {
-  if (isTelegramMode.value) return telegramVisibleItems.value
-
-  let result = items.value.filter(item => matchesQuickFilter(item, currentFilter.value))
-  
-  if (searchKeyword.value) {
-    const keyword = searchKeyword.value.toLowerCase()
-    result = result.filter(item => item.name.toLowerCase().includes(keyword))
-  }
-  
-  result.sort((a, b) => {
-    if (currentFilter.value === 'recent') {
-      const timeA = a.modTime ? new Date(a.modTime).getTime() : 0
-      const timeB = b.modTime ? new Date(b.modTime).getTime() : 0
-      return timeB - timeA
-    }
-
-    if (a.isDir !== b.isDir) {
-      return a.isDir ? -1 : 1
-    }
-    
-    let comparison = 0
-    
-    if (sortBy.value === 'time') {
-      const timeA = a.modTime ? new Date(a.modTime).getTime() : 0
-      const timeB = b.modTime ? new Date(b.modTime).getTime() : 0
-      comparison = timeA - timeB
-    } else {
-      comparison = a.name.localeCompare(b.name)
-    }
-    
-    return sortDesc.value ? -comparison : comparison
-  })
-  
-  return result
+  return telegramVisibleItems.value
 })
 
 const paginatedItems = computed(() => {
-  if (isTelegramMode.value) return filteredItems.value
-  const start = (currentPage.value - 1) * pageSize.value
-  const end = start + pageSize.value
-  return filteredItems.value.slice(start, end)
+  return filteredItems.value
 })
 
 const visibleItemCount = computed(() => filteredItems.value.length)
 const paginationTotal = computed(() => (
-  isTelegramMode.value && currentTelegramGroupId.value
+  currentTelegramGroupId.value
     ? filteredItems.value.length
-    : isTelegramMode.value
-      ? telegramTotal.value
-      : filteredItems.value.length
+    : telegramTotal.value
 ))
 
 const selectedItem = computed(() => {
@@ -926,12 +779,9 @@ async function processThumbnailQueue() {
       // 如果已有缓存，跳过
       if (thumbnailUrls.value[cacheKey]) continue
       
-      const remoteInfo = availableRemotes.value.find(r => r.name === currentRemote.value)
-      const remoteType = remoteInfo?.type || 'onedrive'
-      
       try {
         console.log('正在加载缩略图:', item.name)
-        const response = await getThumbnail(currentRemote.value, item.path, remoteType, currentPath.value, item.id || '')
+        const response = await getThumbnail(currentRemote.value, item.path, 'telegram', currentPath.value, item.id || '')
         
         if (response.success && response.thumbnail_url) {
           thumbnailUrls.value = {
@@ -995,116 +845,6 @@ function queueThumbnails() {
   
   processThumbnailQueue()
 }
-
-
-
-
-// 加载 remotes 列表
-async function loadRemotes() {
-  try {
-    const response = await getRcloneRemotes()
-    const remotes: RcloneRemote[] = [
-      { name: TELEGRAM_REMOTE_NAME, type: 'telegram' },
-    ]
-    if (response.success && response.remotes) {
-      remotes.push(...response.remotes)
-    }
-    availableRemotes.value = remotes
-    if (!currentRemote.value) {
-      currentRemote.value = remotes[0].name
-    }
-  } catch (err) {
-    console.error('加载 remotes 失败:', err)
-    availableRemotes.value = [{ name: TELEGRAM_REMOTE_NAME, type: 'telegram' }]
-    currentRemote.value = TELEGRAM_REMOTE_NAME
-  }
-}
-
-async function fetchRemoteUsage(remote: string, force = false, showError = false) {
-  if (!remote) return null
-
-  const currentState = remoteUsageStates.value[remote]
-  if (!force && currentState?.response) {
-    return currentState.response
-  }
-  if (currentState?.loading) {
-    return currentState.response || null
-  }
-
-  remoteUsageStates.value = {
-    ...remoteUsageStates.value,
-    [remote]: {
-      response: currentState?.response,
-      loading: true
-    }
-  }
-
-  try {
-    const response = await getDriveUsage(remote)
-    remoteUsageStates.value = {
-      ...remoteUsageStates.value,
-      [remote]: {
-        response,
-        loading: false
-      }
-    }
-    if (!response.success && showError) {
-      ElMessage.error(response.error || '获取网盘容量失败')
-    }
-    return response
-  } catch (err: any) {
-    console.error('加载网盘容量失败:', err)
-    const response: DriveUsageResponse = {
-      success: false,
-      supported: false,
-      remote,
-      error: err.message || '获取网盘容量失败'
-    }
-    remoteUsageStates.value = {
-      ...remoteUsageStates.value,
-      [remote]: {
-        response,
-        loading: false
-      }
-    }
-    if (showError) {
-      ElMessage.error(err.message || '获取网盘容量失败')
-    }
-    return response
-  }
-}
-
-async function preloadRemoteUsages() {
-  const tasks = availableRemotes.value.map(remote => fetchRemoteUsage(remote.name))
-  await Promise.allSettled(tasks)
-}
-
-async function loadDriveUsage(force = false, showError = false) {
-  if (!currentRemote.value) return
-  await fetchRemoteUsage(currentRemote.value, force, showError)
-}
-
-function getRemoteUsagePercent(remote: string): number | null {
-  const usage = remoteUsageStates.value[remote]?.response
-  const total = usage?.data?.total
-  const used = usage?.data?.used
-  if (!usage?.supported || !total || used === undefined || used === null || total <= 0) return null
-  return Math.min(100, (used / total) * 100)
-}
-
-function getRemoteUsageSummary(remote: string): string {
-  const state = remoteUsageStates.value[remote]
-  if (state?.loading) return '容量读取中...'
-  const usage = state?.response
-  if (!usage) return '等待加载容量'
-  if (!usage.success) return '容量读取失败'
-  if (!usage.supported || !usage.data) return '暂不支持容量统计'
-
-  const used = formatBytes(usage.data.used ?? 0)
-  const total = formatBytes(usage.data.total ?? 0)
-  return `${used} / ${total}`
-}
-
 function tgMimeFilter(): string | undefined {
   const map: Record<string, string> = {
     videos: 'video',
@@ -1188,71 +928,21 @@ async function loadTelegramUsage(force = false) {
 
 // 浏览目录
 async function browse() {
-  if (!currentRemote.value) return
-
-  if (isTelegramMode.value) {
-    await browseTelegramChannel()
-    return
-  }
-
-  loading.value = true
-  try {
-    const response = await browseDrive(currentRemote.value, currentPath.value)
-    if (response.success && response.items) {
-      items.value = response.items
-      currentPage.value = 1
-      selectedItemPath.value = response.items[0]?.path || ''
-    } else {
-      ElMessage.error(response.error || '获取文件列表失败')
-      items.value = []
-      selectedItemPath.value = ''
-    }
-  } catch (err: any) {
-    console.error('浏览失败:', err)
-    ElMessage.error(err.message || '获取文件列表失败')
-    items.value = []
-    selectedItemPath.value = ''
-  } finally {
-    loading.value = false
-  }
-}
-
-// Remote 改变
-function handleRemoteChange() {
-  currentPath.value = '/'
-  currentPage.value = 1
-  currentFilter.value = 'all'
-  searchKeyword.value = ''
-
-  if (isTelegramMode.value) {
-    loadTelegramUsage()
-  } else if (!remoteUsageStates.value[currentRemote.value]?.response) {
-    loadDriveUsage()
-  }
-  browse()
+  await browseTelegramChannel()
 }
 
 // 下载文件
 async function handleDownload(item: DriveItem) {
   if (item.isDir) return
 
-  let url: string
-  if (isTelegramMode.value) {
-    url = getTelegramDirectLink(item)
-  } else {
-    url = buildAuthorizedApiUrl('/api/rclone/file', {
-      remote: currentRemote.value,
-      path: item.path,
-      download: true,
-    })
-  }
+  const url = getTelegramDirectLink(item)
 
   const queued = await startTrackedDesktopDownload({
     sourceUrl: url,
-    remote: isTelegramMode.value ? 'telegram' : currentRemote.value,
+    remote: 'telegram',
     remotePath: item.path,
     fileName: item.name,
-    pathKey: `${isTelegramMode.value ? 'telegram' : currentRemote.value}:${item.path}`,
+    pathKey: `telegram:${item.path}`,
   })
 
   if (queued) {
@@ -1319,78 +1009,47 @@ async function handleClearTelegramMedia() {
 
 // 删除文件
 function handleDelete(item: DriveItem) {
-  if (isTelegramMode.value) {
-    const isGroup = item.isDir
-    const mediaGroupId = isGroup ? getTelegramGroupIdFromItem(item) : null
-    const messageId = !isGroup ? telegramItemMeta.value[item.path]?.messageId : null
-    const targetLabel = isGroup ? '媒体组' : '文件'
-    const targetName = item.name
+  const isGroup = item.isDir
+  const mediaGroupId = isGroup ? getTelegramGroupIdFromItem(item) : null
+  const messageId = !isGroup ? telegramItemMeta.value[item.path]?.messageId : null
+  const targetLabel = isGroup ? '媒体组' : '文件'
+  const targetName = item.name
 
-    if (isGroup && !mediaGroupId) {
-      ElMessage.error('媒体组标识缺失，无法删除')
-      return
-    }
-    if (!isGroup && !messageId) {
-      ElMessage.error('消息 ID 缺失，无法删除')
-      return
-    }
-
-    ElMessageBox.confirm(
-      `确定要删除 ${targetLabel} "${targetName}" 吗？这会删除频道内对应消息，并清理相关记录。`,
-      '确认删除',
-      {
-        confirmButtonText: '删除',
-        cancelButtonText: '取消',
-        type: 'warning',
-      }
-    ).then(async () => {
-      loading.value = true
-      try {
-        const response = isGroup
-          ? await deleteTelegramGroup(mediaGroupId!)
-          : await deleteTelegramItem(messageId!)
-
-        if (response.success) {
-          if (isGroup && currentTelegramGroupId.value === mediaGroupId) {
-            currentPath.value = '/'
-          }
-          await refreshTelegramViewAfterMutation()
-          ElMessage.success(response.message || '删除成功')
-        } else {
-          ElMessage.error(response.error || '删除失败')
-        }
-      } catch (err: any) {
-        console.error('删除 tg 网盘项目失败:', err)
-        ElMessage.error(err.message || '删除失败')
-      } finally {
-        loading.value = false
-      }
-    }).catch(() => {
-      // 取消删除
-    })
+  if (isGroup && !mediaGroupId) {
+    ElMessage.error('媒体组标识缺失，无法删除')
     return
   }
+  if (!isGroup && !messageId) {
+    ElMessage.error('消息 ID 缺失，无法删除')
+    return
+  }
+
   ElMessageBox.confirm(
-    `确定要删除 ${item.isDir ? '文件夹' : '文件'} "${item.name}" 吗？此操作不可恢复。`,
+    `确定要删除 ${targetLabel} "${targetName}" 吗？这会删除频道内对应消息，并清理相关记录。`,
     '确认删除',
     {
       confirmButtonText: '删除',
       cancelButtonText: '取消',
-      type: 'warning'
+      type: 'warning',
     }
   ).then(async () => {
     loading.value = true
     try {
-      const response = await deleteFile(currentRemote.value, item.path, item.isDir)
+      const response = isGroup
+        ? await deleteTelegramGroup(mediaGroupId!)
+        : await deleteTelegramItem(messageId!)
+
       if (response.success) {
-        ElMessage.success('删除成功')
-        // 刷新列表
-        browse()
+        if (isGroup && currentTelegramGroupId.value === mediaGroupId) {
+          currentPath.value = '/'
+        }
+        await refreshTelegramViewAfterMutation()
+        ElMessage.success(response.message || '删除成功')
       } else {
         ElMessage.error(response.error || '删除失败')
       }
     } catch (err: any) {
-      console.error('删除失败:', err)
+      console.error('删除 tg 网盘项目失败:', err)
       ElMessage.error(err.message || '删除失败')
     } finally {
       loading.value = false
@@ -1425,13 +1084,7 @@ const previewProgressText = computed(() => {
 })
 
 function getSourceUrlForItem(row: DriveItem): string {
-  if (isTelegramMode.value) {
-    return getTelegramDirectLink(row)
-  }
-  return buildAuthorizedApiUrl('/api/rclone/file', {
-    remote: currentRemote.value,
-    path: row.path,
-  })
+  return getTelegramDirectLink(row)
 }
 
 function getTelegramDirectLink(row: DriveItem): string {
@@ -1458,7 +1111,7 @@ async function preparePreviewSource(row: DriveItem): Promise<string> {
 
   const result = await prepareDesktopPreviewFile({
     sourceUrl,
-    remote: isTelegramMode.value ? 'telegram' : currentRemote.value,
+    remote: 'telegram',
     remotePath: row.path,
     fileName: row.name,
   })
@@ -1532,7 +1185,7 @@ async function handleRowClick(row: DriveItem) {
         const sourceUrl = getSourceUrlForItem(row)
         const session = await startDesktopPreviewStream({
           sourceUrl,
-          remote: isTelegramMode.value ? 'telegram' : currentRemote.value,
+          remote: 'telegram',
           remotePath: row.path,
           fileName: row.name,
         })
@@ -1588,10 +1241,6 @@ function closePreview() {
 // 导航到路径
 function navigateToPath(path: string) {
   currentPath.value = path || '/'
-  if (isTelegramMode.value) {
-    return
-  }
-  browse()
 }
 
 function navigateUp() {
@@ -1625,15 +1274,8 @@ function formatDate(dateStr: string | undefined): string {
 }
 
 onMounted(async () => {
-  await loadRemotes()
-  if (currentRemote.value) {
-    if (isTelegramMode.value) {
-      loadTelegramUsage()
-    } else {
-      void preloadRemoteUsages()
-    }
-    browse()
-  }
+  await loadTelegramUsage()
+  await browseTelegramChannel()
 })
 
 // 监听视图模式变化
