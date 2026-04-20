@@ -5,6 +5,6 @@ import time
 from .vars import Var
 from .bot.clients import StreamBot
 
-__version__ = "2.2.4"
+__version__ = "2.2.5"
 StartTime = time.time()
 

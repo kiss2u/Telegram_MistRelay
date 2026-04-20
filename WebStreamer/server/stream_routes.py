@@ -2341,7 +2341,7 @@ async def delete_upload_handler(request: web.Request):
         }, status=500)
 
 
-@routes.get(r"/{path:\S+}", allow_head=True)
+@routes.get(r"/{path:.+}", allow_head=True)
 async def stream_handler(request: web.Request):
     """处理流媒体请求、静态文件请求或 SPA 路由"""
     path = request.match_info["path"]
@@ -2377,13 +2377,15 @@ async def stream_handler(request: web.Request):
             return await media_streamer(request, message_id, secure_hash)
         else:
             # 尝试从路径中提取消息ID
-            message_id = int(re.search(r"(\d+)(?:\/\S+)?", path).group(1))
+            message_id = int(re.search(r"(\d+)(?:\/.*)?", path).group(1))
             secure_hash = request.rel_url.query.get("hash")
             return await media_streamer(request, message_id, secure_hash)
     except InvalidHash as e:
         raise web.HTTPForbidden(text=e.message)
     except FIleNotFound as e:
         raise web.HTTPNotFound(text=e.message)
+    except web.HTTPException:
+        raise
     except (AttributeError, BadStatusLine, ConnectionResetError):
         # 连接错误,尝试 SPA 回退
         pass
@@ -2403,6 +2405,20 @@ async def stream_handler(request: web.Request):
 
 
 class_cache = {}
+
+
+def get_byte_streamer(client):
+    streamer = class_cache.get(client)
+    if streamer is None:
+        streamer = utils.ByteStreamer(client)
+        class_cache[client] = streamer
+    return streamer
+
+
+async def get_main_bot_file_properties(message_id: int):
+    main_client = multi_clients.get(0) or StreamBot
+    main_streamer = get_byte_streamer(main_client)
+    return await main_streamer.get_file_properties(message_id, force_refresh=True)
 
 
 def build_telegram_stream_url(item: dict, hash_len: int) -> str | None:
@@ -2516,13 +2532,27 @@ async def media_streamer(request: web.Request, message_id: int, secure_hash: str
         logger.error("没有可用的客户端")
         raise web.HTTPInternalServerError(text="No available clients")
 
+    try:
+        source_file_id = await get_main_bot_file_properties(message_id)
+        mark_bot_success(0)
+    except FIleNotFound:
+        raise
+    except Exception as error:
+        mark_bot_failure(0, error)
+        logger.warning(f"主客户端获取文件属性失败: {error}")
+        raise
+
+    if utils.get_hash(source_file_id.unique_id, Var.HASH_LENGTH) != secure_hash:
+        logger.debug(f"Invalid hash for message with ID {message_id}")
+        raise InvalidHash
+
     attempted_indices = set()
-    file_id = None
     tg_connect = None
     index = None
+    file_id = None
 
     while True:
-        index = select_stream_bot(prefer_channel=True, exclude_indices=attempted_indices)
+        index = select_stream_bot(prefer_channel=False, exclude_indices=attempted_indices)
         if index is None:
             logger.error("没有有效的客户端")
             raise web.HTTPInternalServerError(text="No valid clients available")
@@ -2539,33 +2569,27 @@ async def media_streamer(request: web.Request, message_id: int, secure_hash: str
             logger.info(f"Client {index} is now serving {request.remote}")
 
         if faster_client in class_cache:
-            tg_connect = class_cache[faster_client]
             logger.debug(f"Using cached ByteStreamer object for client {index}")
         else:
             logger.debug(f"Creating new ByteStreamer object for client {index}")
-            tg_connect = utils.ByteStreamer(faster_client)
-            class_cache[faster_client] = tg_connect
+        tg_connect = get_byte_streamer(faster_client)
 
         try:
-            logger.debug("before calling get_file_properties")
-            file_id = await tg_connect.get_file_properties(message_id)
-            logger.debug("after calling get_file_properties")
+            file_id = await tg_connect.get_file_properties(message_id, force_refresh=True)
+            await tg_connect.generate_media_session(faster_client, file_id)
             mark_bot_success(index)
             break
         except FIleNotFound:
-            raise
+            attempted_indices.add(index)
+            mark_bot_failure(index, "File not found in current bot context")
+            logger.warning(f"客户端 {index} 无法读取频道消息，尝试切换")
         except Exception as error:
             attempted_indices.add(index)
             mark_bot_failure(index, error)
-            logger.warning(f"客户端 {index} 获取文件属性失败，尝试切换: {error}")
+            logger.warning(f"客户端 {index} 准备媒体会话失败，尝试切换: {error}")
             if len(attempted_indices) >= max(1, len(multi_clients)):
                 raise
-    
-    
-    if utils.get_hash(file_id.unique_id, Var.HASH_LENGTH) != secure_hash:
-        logger.debug(f"Invalid hash for message with ID {message_id}")
-        raise InvalidHash
-    
+
     file_size = file_id.file_size
 
     if range_header:
