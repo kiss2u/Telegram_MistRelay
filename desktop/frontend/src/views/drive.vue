@@ -74,6 +74,10 @@
               />
             </el-select>
 
+            <el-button plain @click="inspectorVisible = !inspectorVisible">
+              {{ inspectorVisible ? '隐藏详情' : '显示详情' }}
+            </el-button>
+
             <el-button
               v-if="isTelegramMode"
               type="danger"
@@ -84,110 +88,309 @@
             >
               清空 tg 网盘
             </el-button>
-
-            <el-input
-              v-model="searchKeyword"
-              placeholder="搜索文件名"
-              clearable
-              class="search-input"
-              :prefix-icon="Search"
-            />
           </div>
         </div>
       </div>
 
-      <div class="tg-drive-shell" v-loading="loading">
+      <div
+        class="tg-drive-shell"
+        :class="{ 'is-inspector-hidden': !inspectorVisible }"
+        v-loading="loading"
+      >
         <aside class="tg-filter-rail">
-          <button
-            v-for="filter in quickFilterOptions"
-            :key="filter.key"
-            class="tg-filter-pill"
-            :class="{ 'is-active': currentFilter === filter.key }"
-            @click="currentFilter = filter.key"
-          >
-            <span class="tg-filter-pill-head">
-              <span>{{ filter.label }}</span>
-              <span class="tg-filter-pill-count">{{ filter.count }}</span>
-            </span>
-            <span class="tg-filter-pill-desc">{{ filter.description }}</span>
-          </button>
+          <div class="tg-rail-summary">
+            <div class="tg-rail-summary-label">我的网盘</div>
+            <div class="tg-rail-summary-size">
+              {{ telegramUsage ? formatBytes(telegramUsage.total_size) : '读取中...' }}
+            </div>
+            <div class="tg-rail-summary-meta">
+              {{ telegramUsage ? `${formatCount(telegramUsage.total_count)} 个文件` : '正在同步统计信息' }}
+            </div>
+            <div class="tg-rail-summary-tags">
+              <span class="tg-rail-summary-tag">在线播放</span>
+              <span class="tg-rail-summary-tag">本地缓存</span>
+            </div>
+          </div>
+
+          <div class="tg-rail-section">
+            <div class="tg-rail-section-head">
+              <span class="tg-rail-section-title">浏览</span>
+              <span class="tg-rail-section-note">固定入口</span>
+            </div>
+
+            <button
+              v-for="filter in quickFilterOptions"
+              :key="filter.key"
+              class="tg-filter-pill"
+              :class="{ 'is-active': currentFilter === filter.key }"
+              @click="currentFilter = filter.key"
+            >
+              <span class="tg-filter-pill-head">
+                <span class="tg-filter-pill-title">
+                  <el-icon class="tg-filter-pill-icon"><component :is="filter.icon" /></el-icon>
+                  <span>{{ filter.label }}</span>
+                </span>
+                <span class="tg-filter-pill-count">{{ filter.count }}</span>
+              </span>
+              <span class="tg-filter-pill-desc">{{ filter.description }}</span>
+            </button>
+          </div>
+
+          <div class="tg-rail-section">
+            <div class="tg-rail-section-head">
+              <span class="tg-rail-section-title">智能视图</span>
+              <span class="tg-rail-section-note">PikPak 风格</span>
+            </div>
+
+            <button
+              v-for="option in surfaceViewOptions"
+              :key="option.key"
+              class="tg-rail-compact"
+              :class="{ 'is-active': surfaceView === option.key }"
+              @click="surfaceView = option.key"
+            >
+              <span class="tg-rail-compact-mark">{{ option.short }}</span>
+              <span class="tg-rail-compact-body">
+                <span class="tg-rail-compact-title">{{ option.label }}</span>
+                <span class="tg-rail-compact-desc">{{ option.description }}</span>
+              </span>
+              <span class="tg-rail-compact-count">{{ option.count }}</span>
+            </button>
+          </div>
         </aside>
 
-        <section class="tg-drive-main">
+        <section
+          ref="driveMainRef"
+          class="tg-drive-main"
+          tabindex="0"
+        >
           <div class="tg-stream-header">
-            <div>
+            <div class="tg-stream-header-main">
               <div class="tg-stream-title">文件流</div>
               <div class="tg-stream-subtitle">
-                Telegram 频道 · {{ quickFilterOptions.find(item => item.key === currentFilter)?.label || '全部' }} · {{ visibleItemCount }} 项
+                Telegram 频道 · {{ activeQuickFilter?.label || '全部' }} · {{ activeSurfaceView?.label || '全部流' }} · {{ visibleItemCount }} 项
+              </div>
+              <div class="tg-stream-search">
+                <el-input
+                  v-model="searchInput"
+                  placeholder="搜索文件名、媒体组标题或说明"
+                  clearable
+                  class="tg-stream-search-input"
+                  :prefix-icon="Search"
+                />
+              </div>
+              <div class="tg-stream-active-filters">
+                <span class="tg-stream-filter-chip">
+                  {{ activeQuickFilter?.label || '全部' }}
+                </span>
+                <span class="tg-stream-filter-chip is-muted">
+                  {{ activeSurfaceView?.label || '全部流' }}
+                </span>
+                <span v-if="currentGroupMetaInfo" class="tg-stream-filter-chip is-soft">
+                  媒体组合集
+                </span>
               </div>
             </div>
-            <el-tag round effect="plain">
-              双击打开，单击查看详情
-            </el-tag>
+            <div class="tg-stream-header-side">
+              <el-tag round effect="plain">
+                单击选择，双击打开，右键操作
+              </el-tag>
+              <el-tag round effect="plain" type="info">
+                {{ currentGroupMetaInfo ? '合集详情视图' : 'PikPak 风格工作区' }}
+              </el-tag>
+            </div>
+          </div>
+
+          <div v-if="currentGroupMetaInfo" class="tg-group-hero">
+            <div class="tg-group-hero-collage">
+              <div
+                v-for="previewPath in currentGroupPreviewPaths"
+                :key="previewPath"
+                class="tg-group-hero-tile"
+              >
+                <el-image
+                  :src="getThumbnailUrlByPath(previewPath)"
+                  fit="cover"
+                  class="tg-group-hero-image"
+                >
+                  <template #error>
+                    <div class="tg-group-hero-fallback">
+                      <el-icon :size="18"><Picture /></el-icon>
+                    </div>
+                  </template>
+                </el-image>
+              </div>
+              <div
+                v-if="currentGroupPreviewPaths.length === 0"
+                class="tg-group-hero-empty"
+              >
+                <el-icon :size="34"><Folder /></el-icon>
+              </div>
+            </div>
+
+            <div class="tg-group-hero-body">
+              <div class="tg-group-hero-eyebrow">媒体组合集</div>
+              <div class="tg-group-hero-title">{{ currentGroupMetaInfo.title }}</div>
+              <div class="tg-group-hero-description">{{ currentGroupDescription }}</div>
+              <div class="tg-group-hero-stats">
+                <div class="tg-group-hero-stat">
+                  <span>文件</span>
+                  <strong>{{ currentGroupMetaInfo.count }}</strong>
+                </div>
+                <div class="tg-group-hero-stat">
+                  <span>总大小</span>
+                  <strong>{{ formatBytes(currentGroupMetaInfo.size) }}</strong>
+                </div>
+                <div class="tg-group-hero-stat">
+                  <span>内容</span>
+                  <strong>{{ currentGroupSecondaryLabel }}</strong>
+                </div>
+                <div class="tg-group-hero-stat">
+                  <span>更新</span>
+                  <strong>{{ formatRelativeTime(currentGroupMetaInfo.modTime) }}</strong>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="selectedCount > 0" class="tg-selection-bar">
+            <div class="tg-selection-summary">
+              已选 {{ selectedCount }} 项
+              <span v-if="selectedFileCount || selectedGroupCount" class="tg-selection-detail">
+                {{ selectedFileCount }} 个文件<span v-if="selectedGroupCount"> · {{ selectedGroupCount }} 个媒体组</span>
+              </span>
+            </div>
+            <div class="tg-selection-actions">
+              <el-button size="small" @click="openSelectedItem" :disabled="selectedCount !== 1">
+                打开
+              </el-button>
+              <el-button size="small" @click="handleDownloadSelected" :disabled="selectedFileCount === 0">
+                批量下载
+              </el-button>
+              <el-button size="small" type="danger" plain @click="handleDeleteSelected">
+                批量删除
+              </el-button>
+              <el-button size="small" @click="clearSelection">
+                清除选择
+              </el-button>
+            </div>
           </div>
 
           <div v-if="viewMode === 'list'" class="tg-stream-list">
+            <div class="tg-list-header">
+              <button class="tg-list-header-cell is-name" @click="toggleSort('name')">
+                名称
+                <span class="tg-list-header-sort">{{ getSortIndicator('name') }}</span>
+              </button>
+              <div class="tg-list-header-cell is-description">说明 / 内容</div>
+              <div class="tg-list-header-cell is-size">大小</div>
+              <button class="tg-list-header-cell is-time" @click="toggleSort('time')">
+                更新时间
+                <span class="tg-list-header-sort">{{ getSortIndicator('time') }}</span>
+              </button>
+              <div class="tg-list-header-cell is-actions">操作</div>
+            </div>
+
             <div
               v-for="item in paginatedItems"
               :key="item.path"
               class="tg-file-row"
-              :class="{ 'is-active': selectedItem?.path === item.path }"
-              @click="selectItem(item)"
-              @dblclick="handleRowClick(item)"
+              :class="{ 'is-active': isSelected(item.path) }"
+              @click="handleItemClick(item, $event)"
+              @dblclick="handleItemDoubleClick(item)"
+              @contextmenu.prevent="handleItemContextMenu(item, $event)"
             >
-              <div class="tg-file-avatar">
-                <el-icon v-if="item.isDir" :size="22">
-                  <Folder />
-                </el-icon>
-                <el-image
-                  v-else-if="isImage(item.name)"
-                  :src="getThumbnailUrl(item)"
-                  fit="cover"
-                  class="tg-file-thumb"
-                >
-                  <template #error>
-                    <div class="tg-file-thumb-fallback">
-                      <el-icon :size="22"><Picture /></el-icon>
+              <div class="tg-file-primary">
+                <div class="tg-file-avatar">
+                  <div v-if="item.isDir" class="tg-group-stack">
+                    <div
+                      v-for="previewPath in getTelegramGroupPreviewPaths(item)"
+                      :key="previewPath"
+                      class="tg-group-stack-tile"
+                    >
+                      <el-image
+                        :src="getThumbnailUrlByPath(previewPath)"
+                        fit="cover"
+                        class="tg-group-stack-image"
+                      >
+                        <template #error>
+                          <div class="tg-group-stack-fallback">
+                            <el-icon :size="14"><Picture /></el-icon>
+                          </div>
+                        </template>
+                      </el-image>
                     </div>
-                  </template>
-                </el-image>
-                <div v-else-if="isVideo(item.name)" class="tg-file-thumb-fallback is-video">
-                  <el-icon :size="22"><VideoPlay /></el-icon>
+                    <div
+                      v-if="getTelegramGroupPreviewPaths(item).length === 0"
+                      class="tg-group-stack-empty"
+                    >
+                      <el-icon :size="22"><Folder /></el-icon>
+                    </div>
+                  </div>
+                  <el-image
+                    v-else-if="isImage(item.name)"
+                    :src="getThumbnailUrl(item)"
+                    fit="cover"
+                    class="tg-file-thumb"
+                  >
+                    <template #error>
+                      <div class="tg-file-thumb-fallback">
+                        <el-icon :size="22"><Picture /></el-icon>
+                      </div>
+                    </template>
+                  </el-image>
+                  <div v-else-if="isVideo(item.name)" class="tg-file-thumb-fallback is-video">
+                    <el-icon :size="22"><VideoPlay /></el-icon>
+                  </div>
+                  <el-icon v-else :size="22">
+                    <Document />
+                  </el-icon>
                 </div>
-                <el-icon v-else :size="22">
-                  <Document />
-                </el-icon>
+
+                <div class="tg-file-body">
+                  <div class="tg-file-title-row">
+                    <span class="tg-file-title" :title="item.name">{{ item.name }}</span>
+                    <el-tag size="small" effect="plain" round class="tg-file-type-tag">
+                      {{ getItemTypeLabel(item) }}
+                    </el-tag>
+                  </div>
+                  <div class="tg-file-primary-meta">
+                    {{ item.isDir ? '媒体组合集' : 'Telegram 频道文件' }}
+                  </div>
+                </div>
               </div>
 
-              <div class="tg-file-body">
-                <div class="tg-file-title-row">
-                  <span class="tg-file-title" :title="item.name">{{ item.name }}</span>
-                  <el-tag size="small" effect="plain" round>
-                    {{ getItemTypeLabel(item) }}
-                  </el-tag>
+              <div class="tg-file-description">
+                <div class="tg-file-description-main" :title="getItemDescriptionLine(item)">
+                  {{ getItemDescriptionLine(item) }}
                 </div>
-                <div class="tg-file-meta">
-                  {{ getItemMetaLine(item) }}
-                </div>
-                <div class="tg-file-path" :title="getItemPathHint(item)">
-                  {{ getItemPathHint(item) }}
+                <div class="tg-file-description-sub" :title="getItemDescriptionSubline(item)">
+                  {{ getItemDescriptionSubline(item) }}
                 </div>
               </div>
 
-              <div class="tg-file-trailing">
-                <div class="tg-file-date">{{ formatDate(item.modTime) }}</div>
+              <div class="tg-file-size">
+                {{ getItemSizeDisplay(item) }}
+              </div>
+
+              <div class="tg-file-time">
+                <div class="tg-file-time-main">{{ formatDate(item.modTime) }}</div>
+                <div class="tg-file-time-sub">{{ formatRelativeTime(item.modTime) }}</div>
+              </div>
+
+              <div class="tg-file-actions-col">
                 <div class="tg-file-actions">
-                  <el-button link type="primary" @click.stop="handleRowClick(item)">
+                  <el-button link type="primary" @click.stop="handleItemAction(item, 'open')">
                     {{ item.isDir ? '进入' : '打开' }}
                   </el-button>
                   <el-button
                     v-if="!item.isDir"
                     link
-                    @click.stop="handleDownload(item)"
+                    @click.stop="handleItemAction(item, 'download')"
                   >
                     下载
                   </el-button>
-                  <el-button link type="danger" @click.stop="handleDelete(item)">
+                  <el-button link type="danger" @click.stop="handleItemAction(item, 'delete')">
                     删除
                   </el-button>
                 </div>
@@ -201,12 +404,39 @@
               v-for="item in paginatedItems"
               :key="item.path"
               class="grid-item"
-              @click="handleRowClick(item)"
+              :class="{ 'is-active': isSelected(item.path) }"
+              @click="handleItemClick(item, $event)"
+              @dblclick.stop="handleItemDoubleClick(item)"
+              @contextmenu.prevent="handleItemContextMenu(item, $event)"
             >
               <div class="grid-item-preview">
-                <el-icon v-if="item.isDir" :size="48" class="grid-icon">
-                  <Folder />
-                </el-icon>
+                <div v-if="item.isDir" class="grid-group-collage">
+                  <div
+                    v-for="previewPath in getTelegramGroupPreviewPaths(item)"
+                    :key="previewPath"
+                    class="grid-group-collage-tile"
+                  >
+                    <el-image
+                      :src="getThumbnailUrlByPath(previewPath)"
+                      fit="cover"
+                      class="grid-group-collage-image"
+                      lazy
+                    >
+                      <template #error>
+                        <div class="grid-group-collage-fallback">
+                          <el-icon :size="24"><Picture /></el-icon>
+                        </div>
+                      </template>
+                    </el-image>
+                  </div>
+                  <div
+                    v-if="getTelegramGroupPreviewPaths(item).length === 0"
+                    class="grid-group-collage-empty"
+                  >
+                    <el-icon :size="42"><Folder /></el-icon>
+                  </div>
+                  <div class="grid-group-badge">{{ getTelegramGroupSecondaryLabel(item) }}</div>
+                </div>
                 <el-image
                   v-else-if="isImage(item.name)"
                   :src="getThumbnailUrl(item)"
@@ -258,14 +488,14 @@
                     circle
                     size="small"
                     :icon="Download"
-                    @click.stop="handleDownload(item)"
+                    @click.stop="handleItemAction(item, 'download')"
                   />
                   <el-button
                     circle
                     size="small"
                     type="danger"
                     :icon="Delete"
-                    @click.stop="handleDelete(item)"
+                    @click.stop="handleItemAction(item, 'delete')"
                   />
                 </div>
               </div>
@@ -273,11 +503,35 @@
           </div>
         </section>
 
-        <aside class="tg-inspector" v-if="selectedItem">
-          <div class="tg-inspector-preview" @click="!selectedItem.isDir && handleRowClick(selectedItem)">
-            <el-icon v-if="selectedItem.isDir" :size="54">
-              <Folder />
-            </el-icon>
+        <aside class="tg-inspector" v-if="inspectorVisible && selectedItem">
+          <div class="tg-inspector-preview" @click="handleRowClick(selectedItem)">
+            <div v-if="selectedItem.isDir" class="tg-inspector-group-collage">
+              <div
+                v-for="previewPath in getTelegramGroupPreviewPaths(selectedItem)"
+                :key="previewPath"
+                class="tg-inspector-group-tile"
+              >
+                <el-image
+                  :src="getThumbnailUrlByPath(previewPath)"
+                  fit="cover"
+                  class="tg-inspector-group-image"
+                >
+                  <template #error>
+                    <div class="tg-inspector-group-fallback">
+                      <el-icon :size="20"><Picture /></el-icon>
+                    </div>
+                  </template>
+                </el-image>
+              </div>
+              <div
+                v-if="getTelegramGroupPreviewPaths(selectedItem).length === 0"
+                class="tg-inspector-group-empty"
+              >
+                <el-icon :size="54">
+                  <Folder />
+                </el-icon>
+              </div>
+            </div>
             <el-image
               v-else-if="isImage(selectedItem.name)"
               :src="getThumbnailUrl(selectedItem)"
@@ -298,7 +552,7 @@
             </div>
           </div>
 
-          <div class="tg-inspector-title">{{ selectedItem.name }}</div>
+          <div class="tg-inspector-title" :title="selectedItem.name">{{ selectedItem.name }}</div>
           <div class="tg-inspector-subtitle">{{ getItemMetaLine(selectedItem) }}</div>
 
           <div class="tg-inspector-actions">
@@ -355,7 +609,7 @@
       </div>
 
       <!-- 分页 -->
-      <div v-if="!isTelegramMode || !currentTelegramGroupId" class="pagination-container">
+      <div v-if="showPagination" class="pagination-container">
         <el-pagination
           v-model:current-page="currentPage"
           v-model:page-size="pageSize"
@@ -369,6 +623,30 @@
       <!-- 空状态 -->
       <el-empty v-if="!loading && visibleItemCount === 0" description="此目录为空" />
     </el-card>
+
+    <div
+      v-if="contextMenu.visible"
+      class="tg-context-menu"
+      :style="contextMenuStyle"
+      @contextmenu.prevent
+    >
+      <button class="tg-context-menu-item" @click="handleContextMenuAction('open')" :disabled="selectedCount !== 1">
+        {{ selectedItem?.isDir ? '进入媒体组' : '打开预览' }}
+      </button>
+      <button class="tg-context-menu-item" @click="handleContextMenuAction('download')" :disabled="selectedFileCount === 0">
+        {{ selectedCount > 1 ? '下载已选文件' : '下载到本地' }}
+      </button>
+      <button class="tg-context-menu-item is-danger" @click="handleContextMenuAction('delete')" :disabled="selectedCount === 0">
+        {{ selectedCount > 1 ? '删除已选项' : '删除' }}
+      </button>
+      <div class="tg-context-menu-separator" />
+      <button class="tg-context-menu-item" @click="handleContextMenuAction('selectAll')">
+        全选当前页
+      </button>
+      <button class="tg-context-menu-item" @click="handleContextMenuAction('clearSelection')" :disabled="selectedCount === 0">
+        清除选择
+      </button>
+    </div>
 
     <!-- 图片预览 -->
     <el-image-viewer
@@ -416,7 +694,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { HomeFilled, Document, Folder, Search, List, Grid, Picture, VideoPlay, Sort, Download, Delete, RefreshRight, ArrowLeft } from '@element-plus/icons-vue'
 import { getThumbnail, browseTelegram, getTelegramUsage, deleteTelegramItem, deleteTelegramGroup, clearTelegramMedia, type DriveItem, type TelegramMediaItem, type TelegramUsageStats } from '@/api'
@@ -435,8 +713,28 @@ import { toAbsoluteServerUrl } from '@/utils/runtime'
 const { startTrackedDesktopDownload } = useDesktopDownloads()
 
 type QuickFilter = 'all' | 'folders' | 'videos' | 'images' | 'documents' | 'recent'
+type SurfaceView = 'all' | 'recent' | 'groups' | 'singles' | 'large'
+type SortField = 'name' | 'time'
+type ContextAction = 'open' | 'download' | 'delete' | 'selectAll' | 'clearSelection'
+type QuickFilterOption = {
+  key: QuickFilter
+  label: string
+  description: string
+  count: number
+  icon: typeof HomeFilled
+}
+type SurfaceViewOption = {
+  key: SurfaceView
+  label: string
+  short: string
+  description: string
+  count: number
+}
 
 const TELEGRAM_REMOTE_NAME = '__telegram__'
+const DRIVE_PAGE_SIZE_STORAGE_KEY = 'mistrelay-drive-page-size'
+const DRIVE_VIEW_MODE_STORAGE_KEY = 'mistrelay-drive-view-mode'
+const DRIVE_INSPECTOR_STORAGE_KEY = 'mistrelay-drive-inspector-visible'
 
 interface TelegramItemMeta {
   streamUrl: string
@@ -454,6 +752,9 @@ interface TelegramGroupMeta {
   count: number
   size: number
   modTime?: string
+  previewPaths: string[]
+  videoCount: number
+  imageCount: number
 }
 
 const telegramItemMeta = ref<Record<string, TelegramItemMeta>>({})
@@ -471,17 +772,29 @@ const items = ref<DriveItem[]>([])
 const loading = ref(false)
 const currentFilter = ref<QuickFilter>('all')
 const selectedItemPath = ref('')
+const selectedPaths = ref<string[]>([])
+const lastSelectedPath = ref('')
+const driveMainRef = ref<HTMLElement | null>(null)
+const inspectorVisible = ref(true)
+const searchKeyword = ref('')
+const searchInput = ref('')
+const surfaceView = ref<SurfaceView>('all')
+let searchDebounceTimer: number | null = null
+const contextMenu = ref({
+  visible: false,
+  x: 0,
+  y: 0,
+})
 
 // 搜索和分页
-const searchKeyword = ref('')
 const currentPage = ref(1)
-const pageSize = ref(10)
+const pageSize = ref(readStoredPageSize())
 
 // 视图模式
-const viewMode = ref<'list' | 'grid'>('list')
+const viewMode = ref<'list' | 'grid'>(readStoredViewMode())
 
 // 排序状态
-const sortBy = ref<'name' | 'time'>('time')
+const sortBy = ref<SortField>('time')
 const sortDesc = ref(true) // 默认降序(最新的在前)
 
 // 排序选项
@@ -563,17 +876,29 @@ function matchesQuickFilter(item: DriveItem, filter: QuickFilter): boolean {
 const quickFilterOptions = computed(() => {
   const u = telegramUsage.value
   return [
-    { key: 'all' as QuickFilter, label: '全部', description: '频道中的所有媒体文件', count: u?.total_count || 0 },
-    { key: 'videos' as QuickFilter, label: '视频', description: '在线播放和本地缓存优先', count: u?.videos || 0 },
-    { key: 'images' as QuickFilter, label: '图片', description: '快速预览图片资源', count: u?.images || 0 },
-    { key: 'documents' as QuickFilter, label: '文档', description: '压缩包、PDF 和普通文件', count: u?.documents || 0 },
-  ]
+    { key: 'all' as QuickFilter, label: '全部', description: '频道中的所有媒体文件', count: u?.total_count || 0, icon: HomeFilled },
+    { key: 'videos' as QuickFilter, label: '视频', description: '在线播放和本地缓存优先', count: u?.videos || 0, icon: VideoPlay },
+    { key: 'images' as QuickFilter, label: '图片', description: '快速预览图片资源', count: u?.images || 0, icon: Picture },
+    { key: 'documents' as QuickFilter, label: '文档', description: '压缩包、PDF 和普通文件', count: u?.documents || 0, icon: Document },
+  ] satisfies QuickFilterOption[]
 })
+
+const activeQuickFilter = computed(() => (
+  quickFilterOptions.value.find(item => item.key === currentFilter.value) || null
+))
+
+const telegramItemsByPath = computed(() => new Map(items.value.map(item => [item.path, item])))
 
 const telegramVisibleItems = computed(() => {
   const groupId = currentTelegramGroupId.value
   if (groupId) {
     return items.value.filter(item => telegramItemMeta.value[item.path]?.mediaGroupId === groupId)
+  }
+
+  // In category views users expect real media files, not synthetic group folders.
+  if (currentFilter.value !== 'all') {
+    telegramGroupMeta.value = {}
+    return items.value
   }
 
   const grouped = new Map<string, DriveItem[]>()
@@ -602,6 +927,12 @@ const telegramVisibleItems = computed(() => {
       count: members.length,
       size: members.reduce((sum, member) => sum + (member.size || 0), 0),
       modTime: members[0]?.modTime,
+      previewPaths: members
+        .filter(member => isImage(member.name) || isVideo(member.name))
+        .slice(0, 4)
+        .map(member => member.path),
+      videoCount: members.filter(member => isVideo(member.name)).length,
+      imageCount: members.filter(member => isImage(member.name)).length,
     }
 
     return {
@@ -619,12 +950,27 @@ const telegramVisibleItems = computed(() => {
 })
 
 const filteredItems = computed(() => {
-  return telegramVisibleItems.value
+  return telegramVisibleItems.value.filter(matchesSurfaceView)
 })
 
 const paginatedItems = computed(() => {
   return filteredItems.value
 })
+
+const surfaceViewOptions = computed(() => {
+  const source = telegramVisibleItems.value
+  return [
+    { key: 'all' as SurfaceView, label: '全部流', short: '全', description: '当前筛选下的完整文件流', count: source.length },
+    { key: 'recent' as SurfaceView, label: '最近', short: '近', description: '近 7 天新增或更新的内容', count: source.filter(item => isRecentItem(item)).length },
+    { key: 'groups' as SurfaceView, label: '媒体组', short: '组', description: '多文件合集和相册视图', count: source.filter(item => item.isDir).length },
+    { key: 'singles' as SurfaceView, label: '单文件', short: '单', description: '单个视频、图片和文档', count: source.filter(item => !item.isDir).length },
+    { key: 'large' as SurfaceView, label: '大文件', short: '大', description: '100 MB 以上的单文件', count: source.filter(item => !item.isDir && (item.size || 0) >= 100 * 1024 * 1024).length },
+  ] satisfies SurfaceViewOption[]
+})
+
+const activeSurfaceView = computed(() => (
+  surfaceViewOptions.value.find(item => item.key === surfaceView.value) || null
+))
 
 const visibleItemCount = computed(() => filteredItems.value.length)
 const paginationTotal = computed(() => (
@@ -632,9 +978,58 @@ const paginationTotal = computed(() => (
     ? filteredItems.value.length
     : telegramTotal.value
 ))
+const showPagination = computed(() => !isTelegramMode.value || !currentTelegramGroupId.value)
 
 const selectedItem = computed(() => {
   return paginatedItems.value.find(item => item.path === selectedItemPath.value) || paginatedItems.value[0] || null
+})
+
+const selectedItems = computed(() => {
+  const selectedSet = new Set(selectedPaths.value)
+  return paginatedItems.value.filter(item => selectedSet.has(item.path))
+})
+
+const selectedCount = computed(() => selectedPaths.value.length)
+const selectedFileCount = computed(() => selectedItems.value.filter(item => !item.isDir).length)
+const selectedGroupCount = computed(() => selectedItems.value.filter(item => item.isDir).length)
+
+const contextMenuStyle = computed(() => ({
+  left: `${contextMenu.value.x}px`,
+  top: `${contextMenu.value.y}px`,
+}))
+
+const currentGroupPath = computed(() => (
+  currentTelegramGroupId.value ? `${TELEGRAM_GROUP_PATH_PREFIX}${currentTelegramGroupId.value}` : ''
+))
+
+const currentGroupMetaInfo = computed(() => (
+  currentGroupPath.value ? telegramGroupMeta.value[currentGroupPath.value] || null : null
+))
+
+const currentGroupPreviewPaths = computed(() => (
+  currentGroupMetaInfo.value?.previewPaths || []
+))
+
+const currentGroupSecondaryLabel = computed(() => {
+  if (!currentGroupPath.value) return ''
+  return getTelegramGroupSecondaryLabel({
+    name: currentGroupMetaInfo.value?.title || '媒体组',
+    path: currentGroupPath.value,
+    size: currentGroupMetaInfo.value?.size || 0,
+    mimeType: '',
+    modTime: currentGroupMetaInfo.value?.modTime,
+    isDir: true,
+  })
+})
+
+const currentGroupDescription = computed(() => {
+  if (!currentGroupMetaInfo.value) return ''
+  const parts = [
+    currentGroupSecondaryLabel.value,
+    currentGroupMetaInfo.value.size > 0 ? formatBytes(currentGroupMetaInfo.value.size) : '',
+    currentGroupMetaInfo.value.modTime ? formatDate(currentGroupMetaInfo.value.modTime) : '',
+  ].filter(Boolean)
+  return parts.join(' · ')
 })
 
 // 文件类型判断
@@ -669,11 +1064,33 @@ function getItemTypeLabel(item: DriveItem): string {
   return '文件'
 }
 
+function isRecentItem(item: DriveItem): boolean {
+  if (!item.modTime) return false
+  const timestamp = new Date(item.modTime).getTime()
+  if (Number.isNaN(timestamp)) return false
+  return Date.now() - timestamp <= 7 * 24 * 60 * 60 * 1000
+}
+
+function matchesSurfaceView(item: DriveItem): boolean {
+  switch (surfaceView.value) {
+    case 'recent':
+      return isRecentItem(item)
+    case 'groups':
+      return item.isDir
+    case 'singles':
+      return !item.isDir
+    case 'large':
+      return !item.isDir && (item.size || 0) >= 100 * 1024 * 1024
+    default:
+      return true
+  }
+}
+
 function buildTelegramGroupTitle(mediaGroupId: string, members: DriveItem[]): string {
   const first = members[0]
   const firstMeta = first ? telegramItemMeta.value[first.path] : null
   const baseTitle = firstMeta?.caption?.trim() || first?.name || `媒体组 ${mediaGroupId.slice(-6)}`
-  return `${baseTitle} · ${members.length} 项`
+  return baseTitle.replace(/\s+/g, ' ').trim()
 }
 
 function formatRelativeTime(dateStr: string | undefined): string {
@@ -746,8 +1163,396 @@ function getItemPathHint(item: DriveItem): string {
   return telegramItemMeta.value[item.path]?.caption || item.path
 }
 
+function getItemDescriptionLine(item: DriveItem): string {
+  if (item.isDir) {
+    const group = telegramGroupMeta.value[item.path]
+    if (!group) return '媒体组合集'
+    return `${group.count} 个文件 · ${getTelegramGroupSecondaryLabel(item)}`
+  }
+
+  const meta = telegramItemMeta.value[item.path]
+  return meta?.caption?.trim() || 'Telegram 频道文件'
+}
+
+function getItemDescriptionSubline(item: DriveItem): string {
+  if (item.isDir) {
+    const group = telegramGroupMeta.value[item.path]
+    if (!group) return '进入后查看组内文件'
+    return group.modTime ? `最后更新 ${formatDate(group.modTime)}` : '进入后查看组内文件'
+  }
+
+  const metaParts = [getItemMetaLine(item)]
+  if (telegramItemMeta.value[item.path]?.messageId) {
+    metaParts.push(`消息 ${telegramItemMeta.value[item.path].messageId}`)
+  }
+  return metaParts.join(' · ')
+}
+
+function getItemSizeDisplay(item: DriveItem): string {
+  if (item.isDir) {
+    const group = telegramGroupMeta.value[item.path]
+    return formatBytes(group?.size || item.size || 0)
+  }
+  return formatBytes(item.size)
+}
+
+function getTelegramGroupPreviewPaths(item: DriveItem): string[] {
+  return telegramGroupMeta.value[item.path]?.previewPaths || []
+}
+
+function getThumbnailUrlByPath(path: string): string {
+  const item = telegramItemsByPath.value.get(path)
+  if (!item) return ''
+  return getThumbnailUrl(item)
+}
+
+function getTelegramGroupSecondaryLabel(item: DriveItem): string {
+  const group = telegramGroupMeta.value[item.path]
+  if (!group) return '媒体组'
+  if (group.videoCount > 0 && group.imageCount > 0) {
+    return `${group.videoCount} 视频 · ${group.imageCount} 图片`
+  }
+  if (group.videoCount > 0) {
+    return `${group.videoCount} 个视频`
+  }
+  if (group.imageCount > 0) {
+    return `${group.imageCount} 张图片`
+  }
+  return `${group.count} 个文件`
+}
+
 function selectItem(item: DriveItem) {
-  selectedItemPath.value = item.path
+  selectSingleItem(item.path)
+}
+
+function readStoredPageSize(): number {
+  const value = Number(window.localStorage.getItem(DRIVE_PAGE_SIZE_STORAGE_KEY) || '')
+  return [10, 20, 50, 100, 200].includes(value) ? value : 50
+}
+
+function readStoredViewMode(): 'list' | 'grid' {
+  return window.localStorage.getItem(DRIVE_VIEW_MODE_STORAGE_KEY) === 'grid' ? 'grid' : 'list'
+}
+
+function isSelected(path: string): boolean {
+  return selectedPaths.value.includes(path)
+}
+
+function setSelectedPaths(paths: string[]) {
+  const deduped = Array.from(new Set(paths))
+  selectedPaths.value = deduped
+  selectedItemPath.value = deduped[0] || ''
+  if (deduped[0]) {
+    lastSelectedPath.value = deduped[0]
+  }
+}
+
+function selectSingleItem(path: string) {
+  setSelectedPaths([path])
+}
+
+function clearSelection() {
+  selectedPaths.value = []
+  selectedItemPath.value = ''
+}
+
+function getItemByPath(path: string): DriveItem | undefined {
+  return paginatedItems.value.find(item => item.path === path)
+}
+
+function selectRangeTo(path: string) {
+  const anchorPath = lastSelectedPath.value || selectedPaths.value[0] || path
+  const startIndex = paginatedItems.value.findIndex(item => item.path === anchorPath)
+  const endIndex = paginatedItems.value.findIndex(item => item.path === path)
+  if (startIndex === -1 || endIndex === -1) {
+    selectSingleItem(path)
+    return
+  }
+
+  const [from, to] = startIndex < endIndex ? [startIndex, endIndex] : [endIndex, startIndex]
+  setSelectedPaths(paginatedItems.value.slice(from, to + 1).map(item => item.path))
+}
+
+function toggleItemSelection(path: string) {
+  if (isSelected(path)) {
+    const next = selectedPaths.value.filter(selectedPath => selectedPath !== path)
+    setSelectedPaths(next)
+  } else {
+    setSelectedPaths([...selectedPaths.value, path])
+  }
+  lastSelectedPath.value = path
+}
+
+function selectAllVisible() {
+  setSelectedPaths(paginatedItems.value.map(item => item.path))
+}
+
+function handleItemClick(item: DriveItem, event: MouseEvent) {
+  hideContextMenu()
+
+  if (event.shiftKey) {
+    selectRangeTo(item.path)
+  } else if (event.ctrlKey || event.metaKey) {
+    toggleItemSelection(item.path)
+  } else {
+    selectSingleItem(item.path)
+  }
+}
+
+function handleItemDoubleClick(item: DriveItem) {
+  selectSingleItem(item.path)
+  void handleRowClick(item)
+}
+
+function handleItemAction(item: DriveItem, action: 'open' | 'download' | 'delete') {
+  selectSingleItem(item.path)
+  if (action === 'open') {
+    void handleRowClick(item)
+    return
+  }
+  if (action === 'download') {
+    void handleDownload(item)
+    return
+  }
+  if (action === 'delete') {
+    void handleDeleteSelected([item.path])
+  }
+}
+
+function handleItemContextMenu(item: DriveItem, event: MouseEvent) {
+  if (!isSelected(item.path)) {
+    selectSingleItem(item.path)
+  }
+
+  contextMenu.value = {
+    visible: true,
+    x: event.clientX,
+    y: event.clientY,
+  }
+}
+
+function hideContextMenu() {
+  if (!contextMenu.value.visible) return
+  contextMenu.value.visible = false
+}
+
+function toggleSort(field: SortField) {
+  if (sortBy.value === field) {
+    sortDesc.value = !sortDesc.value
+    return
+  }
+  sortBy.value = field
+  sortDesc.value = field === 'time'
+}
+
+function getSortIndicator(field: SortField): string {
+  if (sortBy.value !== field) return ''
+  return sortDesc.value ? '↓' : '↑'
+}
+
+async function downloadItems(itemsToDownload: DriveItem[]): Promise<void> {
+  if (itemsToDownload.length === 0) return
+
+  let queuedCount = 0
+  let skippedCount = 0
+
+  for (const item of itemsToDownload) {
+    if (item.isDir) continue
+    const url = getTelegramDirectLink(item)
+    const queued = await startTrackedDesktopDownload({
+      sourceUrl: url,
+      remote: 'telegram',
+      remotePath: item.path,
+      fileName: item.name,
+      pathKey: `telegram:${item.path}`,
+    })
+    if (queued) {
+      queuedCount += 1
+    } else {
+      skippedCount += 1
+    }
+  }
+
+  if (queuedCount > 0 && skippedCount > 0) {
+    ElMessage.success(`已加入下载 ${queuedCount} 项，${skippedCount} 项已在队列中`)
+  } else if (queuedCount > 0) {
+    ElMessage.success(`已加入下载 ${queuedCount} 项`)
+  } else {
+    ElMessage.info('所选文件已在本地下载队列中')
+  }
+}
+
+function getSelectedOrProvidedItems(paths?: string[]): DriveItem[] {
+  const targetPaths = paths ?? selectedPaths.value
+  const targetSet = new Set(targetPaths)
+  return paginatedItems.value.filter(item => targetSet.has(item.path))
+}
+
+async function handleDownloadSelected() {
+  await downloadItems(getSelectedOrProvidedItems().filter(item => !item.isDir))
+}
+
+async function deleteItems(itemsToDelete: DriveItem[]): Promise<void> {
+  if (itemsToDelete.length === 0) return
+
+  const hasGroups = itemsToDelete.some(item => item.isDir)
+  const label = itemsToDelete.length === 1
+    ? `${itemsToDelete[0].isDir ? '媒体组' : '文件'} "${itemsToDelete[0].name}"`
+    : `${itemsToDelete.length} 个项目`
+
+  await ElMessageBox.confirm(
+    `确定要删除 ${label} 吗？这会删除频道内对应消息，并清理相关记录。`,
+    '确认删除',
+    {
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+      type: 'warning',
+    }
+  )
+
+  loading.value = true
+  try {
+    for (const item of itemsToDelete) {
+      const mediaGroupId = item.isDir ? getTelegramGroupIdFromItem(item) : null
+      const messageId = item.isDir ? null : telegramItemMeta.value[item.path]?.messageId
+
+      if (item.isDir) {
+        if (!mediaGroupId) {
+          throw new Error(`媒体组 "${item.name}" 缺少分组标识`)
+        }
+        const response = await deleteTelegramGroup(mediaGroupId)
+        if (!response.success) {
+          throw new Error(response.error || `删除媒体组 "${item.name}" 失败`)
+        }
+        if (currentTelegramGroupId.value === mediaGroupId) {
+          currentPath.value = '/'
+        }
+      } else {
+        if (!messageId) {
+          throw new Error(`文件 "${item.name}" 缺少消息 ID`)
+        }
+        const response = await deleteTelegramItem(messageId)
+        if (!response.success) {
+          throw new Error(response.error || `删除文件 "${item.name}" 失败`)
+        }
+      }
+    }
+
+    clearSelection()
+    await refreshTelegramViewAfterMutation()
+    ElMessage.success(
+      itemsToDelete.length === 1
+        ? `${hasGroups ? '媒体组' : '文件'}删除成功`
+        : `已删除 ${itemsToDelete.length} 个项目`
+    )
+  } finally {
+    loading.value = false
+  }
+}
+
+function openSelectedItem() {
+  const item = selectedItems.value[0]
+  if (!item || selectedCount.value !== 1) return
+  void handleRowClick(item)
+}
+
+async function handleDeleteSelected(paths?: string[]) {
+  const itemsToDelete = getSelectedOrProvidedItems(paths)
+  if (itemsToDelete.length === 0) return
+
+  try {
+    await deleteItems(itemsToDelete)
+  } catch (err: any) {
+    if (err !== 'cancel' && err !== 'close') {
+      console.error('删除 tg 网盘项目失败:', err)
+      ElMessage.error(err.message || '删除失败')
+    }
+  }
+}
+
+function handleContextMenuAction(action: ContextAction) {
+  hideContextMenu()
+  if (action === 'open') {
+    openSelectedItem()
+    return
+  }
+  if (action === 'download') {
+    void handleDownloadSelected()
+    return
+  }
+  if (action === 'delete') {
+    void handleDeleteSelected()
+    return
+  }
+  if (action === 'selectAll') {
+    selectAllVisible()
+    return
+  }
+  clearSelection()
+}
+
+function moveSelection(offset: number) {
+  if (paginatedItems.value.length === 0) return
+
+  const currentPath = selectedPaths.value[0] || paginatedItems.value[0]?.path
+  const currentIndex = paginatedItems.value.findIndex(item => item.path === currentPath)
+  const nextIndex = currentIndex === -1
+    ? 0
+    : Math.min(Math.max(currentIndex + offset, 0), paginatedItems.value.length - 1)
+
+  const nextItem = paginatedItems.value[nextIndex]
+  if (!nextItem) return
+  selectSingleItem(nextItem.path)
+}
+
+function handleGlobalPointerDown(event: MouseEvent) {
+  const target = event.target as Node | null
+  if (target && driveMainRef.value?.contains(target)) return
+  hideContextMenu()
+}
+
+function handleDriveKeydown(event: KeyboardEvent) {
+  const target = event.target as HTMLElement | null
+  if (target && ['INPUT', 'TEXTAREA'].includes(target.tagName)) {
+    return
+  }
+
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
+    event.preventDefault()
+    selectAllVisible()
+    return
+  }
+
+  if (event.key === 'Escape') {
+    hideContextMenu()
+    clearSelection()
+    return
+  }
+
+  if (event.key === 'ArrowDown') {
+    event.preventDefault()
+    moveSelection(1)
+    return
+  }
+
+  if (event.key === 'ArrowUp') {
+    event.preventDefault()
+    moveSelection(-1)
+    return
+  }
+
+  if (event.key === 'Enter') {
+    event.preventDefault()
+    openSelectedItem()
+    return
+  }
+
+  if (event.key === 'Delete' || event.key === 'Backspace') {
+    if (selectedCount.value > 0) {
+      event.preventDefault()
+      void handleDeleteSelected()
+    }
+  }
 }
 
 // 缩略图URL响应式存储
@@ -934,32 +1739,8 @@ async function browse() {
 // 下载文件
 async function handleDownload(item: DriveItem) {
   if (item.isDir) return
-
-  const url = getTelegramDirectLink(item)
-
-  const queued = await startTrackedDesktopDownload({
-    sourceUrl: url,
-    remote: 'telegram',
-    remotePath: item.path,
-    fileName: item.name,
-    pathKey: `telegram:${item.path}`,
-  })
-
-  if (queued) {
-    ElMessage({
-      type: 'success',
-      message: `已添加到本地下载中: ${item.name}`,
-      duration: 1800,
-      showClose: false,
-    })
-  } else {
-    ElMessage({
-      type: 'info',
-      message: `该文件已在本地下载队列中: ${item.name}`,
-      duration: 1800,
-      showClose: false,
-    })
-  }
+  selectSingleItem(item.path)
+  await downloadItems([item])
 }
 
 function getTelegramGroupIdFromItem(item: DriveItem): string | null {
@@ -1009,54 +1790,8 @@ async function handleClearTelegramMedia() {
 
 // 删除文件
 function handleDelete(item: DriveItem) {
-  const isGroup = item.isDir
-  const mediaGroupId = isGroup ? getTelegramGroupIdFromItem(item) : null
-  const messageId = !isGroup ? telegramItemMeta.value[item.path]?.messageId : null
-  const targetLabel = isGroup ? '媒体组' : '文件'
-  const targetName = item.name
-
-  if (isGroup && !mediaGroupId) {
-    ElMessage.error('媒体组标识缺失，无法删除')
-    return
-  }
-  if (!isGroup && !messageId) {
-    ElMessage.error('消息 ID 缺失，无法删除')
-    return
-  }
-
-  ElMessageBox.confirm(
-    `确定要删除 ${targetLabel} "${targetName}" 吗？这会删除频道内对应消息，并清理相关记录。`,
-    '确认删除',
-    {
-      confirmButtonText: '删除',
-      cancelButtonText: '取消',
-      type: 'warning',
-    }
-  ).then(async () => {
-    loading.value = true
-    try {
-      const response = isGroup
-        ? await deleteTelegramGroup(mediaGroupId!)
-        : await deleteTelegramItem(messageId!)
-
-      if (response.success) {
-        if (isGroup && currentTelegramGroupId.value === mediaGroupId) {
-          currentPath.value = '/'
-        }
-        await refreshTelegramViewAfterMutation()
-        ElMessage.success(response.message || '删除成功')
-      } else {
-        ElMessage.error(response.error || '删除失败')
-      }
-    } catch (err: any) {
-      console.error('删除 tg 网盘项目失败:', err)
-      ElMessage.error(err.message || '删除失败')
-    } finally {
-      loading.value = false
-    }
-  }).catch(() => {
-    // 取消删除
-  })
+  selectSingleItem(item.path)
+  void handleDeleteSelected([item.path])
 }
 
 // 预览状态
@@ -1274,18 +2009,45 @@ function formatDate(dateStr: string | undefined): string {
 }
 
 onMounted(async () => {
+  inspectorVisible.value = window.localStorage.getItem(DRIVE_INSPECTOR_STORAGE_KEY) !== '0'
+  window.addEventListener('keydown', handleDriveKeydown)
+  window.addEventListener('pointerdown', handleGlobalPointerDown)
   await loadTelegramUsage()
   await browseTelegramChannel()
 })
 
+onBeforeUnmount(() => {
+  if (searchDebounceTimer) {
+    window.clearTimeout(searchDebounceTimer)
+  }
+  window.removeEventListener('keydown', handleDriveKeydown)
+  window.removeEventListener('pointerdown', handleGlobalPointerDown)
+})
+
 // 监听视图模式变化
 watch(viewMode, (newMode) => {
+  window.localStorage.setItem(DRIVE_VIEW_MODE_STORAGE_KEY, newMode)
   if (newMode === 'grid') {
     queueThumbnails()
   }
 })
 
+watch(inspectorVisible, (value) => {
+  window.localStorage.setItem(DRIVE_INSPECTOR_STORAGE_KEY, value ? '1' : '0')
+})
+
+watch(searchInput, (value) => {
+  if (searchDebounceTimer) {
+    window.clearTimeout(searchDebounceTimer)
+  }
+  searchDebounceTimer = window.setTimeout(() => {
+    searchKeyword.value = value.trim()
+  }, 280)
+})
+
 watch([currentFilter, searchKeyword], () => {
+  hideContextMenu()
+  clearSelection()
   currentPage.value = 1
   if (isTelegramMode.value) {
     browseTelegramChannel()
@@ -1293,22 +2055,39 @@ watch([currentFilter, searchKeyword], () => {
 })
 
 watch([currentPage, pageSize], () => {
+  window.localStorage.setItem(DRIVE_PAGE_SIZE_STORAGE_KEY, String(pageSize.value))
+  hideContextMenu()
+  clearSelection()
   if (isTelegramMode.value && !currentTelegramGroupId.value) {
     browseTelegramChannel()
   }
 })
 
 watch([sortBy, sortDesc], () => {
+  hideContextMenu()
+  clearSelection()
   if (isTelegramMode.value) {
     currentPage.value = 1
     browseTelegramChannel()
   }
 })
 
+watch(currentPath, () => {
+  hideContextMenu()
+  clearSelection()
+})
+
 // 监听分页数据变化
 watch(paginatedItems, () => {
-    if (!paginatedItems.value.some(item => item.path === selectedItemPath.value)) {
-      selectedItemPath.value = paginatedItems.value[0]?.path || ''
+    const visiblePaths = new Set(paginatedItems.value.map(item => item.path))
+    const nextSelection = selectedPaths.value.filter(path => visiblePaths.has(path))
+
+    if (nextSelection.length > 0) {
+      setSelectedPaths(nextSelection)
+    } else if (paginatedItems.value.length > 0) {
+      selectSingleItem(paginatedItems.value[0].path)
+    } else {
+      clearSelection()
     }
     queueThumbnails()
 }, { deep: true })
@@ -1471,12 +2250,92 @@ watch(paginatedItems, () => {
   align-items: start;
 }
 
+.tg-drive-shell.is-inspector-hidden {
+  grid-template-columns: 220px minmax(0, 1fr);
+}
+
 .tg-filter-rail {
   display: flex;
   flex-direction: column;
   gap: 10px;
   position: sticky;
   top: 0;
+}
+
+.tg-rail-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tg-rail-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 4px;
+}
+
+.tg-rail-section-title {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.tg-rail-section-note {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.tg-rail-summary {
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid #dbeafe;
+  background: linear-gradient(160deg, #f8fbff 0%, #eef6ff 58%, #ffffff 100%);
+  box-shadow: 0 18px 30px rgba(59, 130, 246, 0.08);
+}
+
+.tg-rail-summary-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: #64748b;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.tg-rail-summary-size {
+  margin-top: 10px;
+  font-size: 24px;
+  font-weight: 800;
+  color: #0f172a;
+  line-height: 1.1;
+}
+
+.tg-rail-summary-meta {
+  margin-top: 8px;
+  font-size: 13px;
+  color: #64748b;
+  line-height: 1.5;
+}
+
+.tg-rail-summary-tags {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+
+.tg-rail-summary-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.08);
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .tg-filter-pill {
@@ -1511,6 +2370,25 @@ watch(paginatedItems, () => {
   color: #0f172a;
 }
 
+.tg-filter-pill-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.tg-filter-pill-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 10px;
+  background: rgba(37, 99, 235, 0.08);
+  color: #2563eb;
+  flex: 0 0 auto;
+}
+
 .tg-filter-pill-count {
   color: #2563eb;
 }
@@ -1523,13 +2401,77 @@ watch(paginatedItems, () => {
   color: #64748b;
 }
 
+.tg-rail-compact {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  text-align: left;
+  transition: all 0.2s ease;
+}
+
+.tg-rail-compact:hover,
+.tg-rail-compact.is-active {
+  border-color: #bfdbfe;
+  box-shadow: 0 12px 30px rgba(59, 130, 246, 0.12);
+  transform: translateY(-1px);
+}
+
+.tg-rail-compact.is-active {
+  background: linear-gradient(180deg, #eff6ff 0%, #f8fbff 100%);
+}
+
+.tg-rail-compact-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 12px;
+  background: rgba(37, 99, 235, 0.08);
+  color: #2563eb;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.tg-rail-compact-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.tg-rail-compact-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.tg-rail-compact-desc {
+  font-size: 11px;
+  line-height: 1.4;
+  color: #64748b;
+}
+
+.tg-rail-compact-count {
+  font-size: 12px;
+  font-weight: 700;
+  color: #2563eb;
+}
+
 .tg-drive-main {
   min-width: 0;
+  outline: none;
 }
 
 .tg-stream-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
   padding: 16px 18px;
@@ -1537,6 +2479,51 @@ watch(paginatedItems, () => {
   background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
   border: 1px solid #e2e8f0;
   margin-bottom: 14px;
+}
+
+.tg-stream-header-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.tg-stream-header-side {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tg-selection-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  border: 1px solid #dbeafe;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #f8fbff 0%, #eff6ff 100%);
+  margin-bottom: 14px;
+}
+
+.tg-selection-summary {
+  font-size: 13px;
+  font-weight: 700;
+  color: #1e3a8a;
+}
+
+.tg-selection-detail {
+  margin-left: 8px;
+  font-weight: 500;
+  color: #475569;
+}
+
+.tg-selection-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .tg-stream-title {
@@ -1551,15 +2538,199 @@ watch(paginatedItems, () => {
   color: #64748b;
 }
 
+.tg-stream-search {
+  margin-top: 14px;
+}
+
+.tg-stream-search-input {
+  width: min(520px, 100%);
+}
+
+.tg-stream-search-input :deep(.el-input__wrapper) {
+  min-height: 42px;
+  border-radius: 14px;
+  background: #f8fafc;
+  box-shadow: none;
+  border: 1px solid #dbeafe;
+}
+
+.tg-stream-active-filters {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+
+.tg-stream-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 12px;
+  border: 1px solid #dbeafe;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.tg-stream-filter-chip.is-muted {
+  color: #475569;
+  border-color: #e2e8f0;
+}
+
+.tg-stream-filter-chip.is-soft {
+  color: #0f766e;
+  border-color: #ccfbf1;
+  background: #f0fdfa;
+}
+
+.tg-group-hero {
+  display: grid;
+  grid-template-columns: 168px minmax(0, 1fr);
+  gap: 18px;
+  padding: 18px;
+  margin-bottom: 14px;
+  border-radius: 20px;
+  border: 1px solid #dbeafe;
+  background: linear-gradient(135deg, #f8fbff 0%, #eef6ff 48%, #ffffff 100%);
+  box-shadow: 0 20px 36px rgba(59, 130, 246, 0.08);
+}
+
+.tg-group-hero-collage {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  grid-template-rows: repeat(2, 1fr);
+  gap: 6px;
+  min-height: 168px;
+  padding: 6px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.tg-group-hero-tile,
+.tg-group-hero-image {
+  width: 100%;
+  height: 100%;
+}
+
+.tg-group-hero-tile {
+  overflow: hidden;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.tg-group-hero-fallback,
+.tg-group-hero-empty {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #2563eb;
+  background: rgba(255, 255, 255, 0.76);
+}
+
+.tg-group-hero-empty {
+  grid-column: 1 / -1;
+  grid-row: 1 / -1;
+  border-radius: 14px;
+}
+
+.tg-group-hero-body {
+  min-width: 0;
+}
+
+.tg-group-hero-eyebrow {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #2563eb;
+}
+
+.tg-group-hero-title {
+  margin-top: 8px;
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1.2;
+  color: #0f172a;
+  word-break: break-word;
+}
+
+.tg-group-hero-description {
+  margin-top: 10px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #475569;
+}
+
+.tg-group-hero-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.tg-group-hero-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(219, 234, 254, 0.9);
+}
+
+.tg-group-hero-stat span {
+  font-size: 11px;
+  color: #64748b;
+}
+
+.tg-group-hero-stat strong {
+  font-size: 14px;
+  line-height: 1.45;
+  color: #0f172a;
+  word-break: break-word;
+}
+
 .tg-stream-list {
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
 
+.tg-list-header {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.4fr) minmax(220px, 1fr) 110px 160px 164px;
+  gap: 14px;
+  padding: 0 16px;
+  margin-bottom: 4px;
+}
+
+.tg-list-header-cell {
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 700;
+  color: #64748b;
+  text-align: left;
+}
+
+.tg-list-header-cell.is-size,
+.tg-list-header-cell.is-time,
+.tg-list-header-cell.is-actions {
+  text-align: right;
+}
+
+.tg-list-header-sort {
+  margin-left: 4px;
+  color: #2563eb;
+}
+
 .tg-file-row {
   display: grid;
-  grid-template-columns: 56px minmax(0, 1fr) 180px;
+  grid-template-columns: minmax(260px, 1.4fr) minmax(220px, 1fr) 110px 160px 164px;
   gap: 14px;
   padding: 14px 16px;
   border-radius: 18px;
@@ -1576,6 +2747,7 @@ watch(paginatedItems, () => {
 
 .tg-file-row.is-active {
   background: linear-gradient(180deg, #eff6ff 0%, #f8fbff 100%);
+  box-shadow: 0 16px 32px rgba(59, 130, 246, 0.14);
 }
 
 .tg-file-avatar {
@@ -1588,6 +2760,13 @@ watch(paginatedItems, () => {
   background: linear-gradient(135deg, #e0e7ff 0%, #dbeafe 100%);
   color: #2563eb;
   overflow: hidden;
+}
+
+.tg-file-primary {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  min-width: 0;
 }
 
 .tg-file-thumb {
@@ -1609,30 +2788,84 @@ watch(paginatedItems, () => {
   background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
 }
 
+.tg-group-stack {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  grid-template-rows: repeat(2, 1fr);
+  gap: 3px;
+  padding: 3px;
+  background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+}
+
+.tg-group-stack-tile,
+.tg-group-stack-image {
+  width: 100%;
+  height: 100%;
+}
+
+.tg-group-stack-tile {
+  overflow: hidden;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.66);
+}
+
+.tg-group-stack-fallback,
+.tg-group-stack-empty {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #2563eb;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.tg-group-stack-empty {
+  grid-column: 1 / -1;
+  grid-row: 1 / -1;
+  border-radius: 14px;
+}
+
 .tg-file-body {
   min-width: 0;
 }
 
 .tg-file-title-row {
-  display: flex;
-  align-items: center;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
   gap: 10px;
 }
 
 .tg-file-title {
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.35;
   font-size: 15px;
   font-weight: 700;
   color: #0f172a;
+}
+
+.tg-file-type-tag {
+  flex: 0 0 auto;
+  justify-self: end;
+  margin-top: 1px;
 }
 
 .tg-file-meta {
   margin-top: 6px;
   font-size: 13px;
   color: #475569;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tg-file-path {
@@ -1644,18 +2877,69 @@ watch(paginatedItems, () => {
   white-space: nowrap;
 }
 
-.tg-file-trailing {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 10px;
+.tg-file-primary-meta {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #64748b;
 }
 
-.tg-file-date {
+.tg-file-description,
+.tg-file-size,
+.tg-file-time,
+.tg-file-actions-col {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+}
+
+.tg-file-description {
+  gap: 6px;
+}
+
+.tg-file-description-main,
+.tg-file-description-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tg-file-description-main {
+  font-size: 13px;
+  color: #334155;
+}
+
+.tg-file-description-sub {
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.tg-file-size {
+  align-items: flex-end;
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.tg-file-time {
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.tg-file-time-main {
   font-size: 12px;
   color: #64748b;
   text-align: right;
+}
+
+.tg-file-time-sub {
+  font-size: 11px;
+  color: #94a3b8;
+  text-align: right;
+}
+
+.tg-file-actions-col {
+  align-items: flex-end;
 }
 
 .tg-file-actions {
@@ -1688,6 +2972,45 @@ watch(paginatedItems, () => {
   cursor: pointer;
 }
 
+.tg-inspector-group-collage {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  grid-template-rows: repeat(2, 1fr);
+  gap: 6px;
+  width: 100%;
+  height: 100%;
+  padding: 8px;
+}
+
+.tg-inspector-group-tile,
+.tg-inspector-group-image {
+  width: 100%;
+  height: 100%;
+}
+
+.tg-inspector-group-tile {
+  overflow: hidden;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.tg-inspector-group-fallback,
+.tg-inspector-group-empty {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.76);
+  color: #2563eb;
+}
+
+.tg-inspector-group-empty {
+  grid-column: 1 / -1;
+  grid-row: 1 / -1;
+  border-radius: 16px;
+}
+
 .tg-inspector-image {
   width: 100%;
   height: 100%;
@@ -1709,8 +3032,13 @@ watch(paginatedItems, () => {
   margin-top: 18px;
   font-size: 20px;
   font-weight: 800;
+  line-height: 1.35;
   color: #0f172a;
   word-break: break-word;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
 }
 
 .tg-inspector-subtitle {
@@ -1774,6 +3102,10 @@ watch(paginatedItems, () => {
 }
 
 .grid-item {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
   padding: 12px;
@@ -1786,6 +3118,11 @@ watch(paginatedItems, () => {
   border-color: var(--el-color-primary);
   box-shadow: 0 4px 12px rgba(102, 126, 234, 0.15);
   transform: translateY(-2px);
+}
+
+.grid-item.is-active {
+  border-color: #60a5fa;
+  box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.18), 0 10px 24px rgba(59, 130, 246, 0.14);
 }
 
 .grid-item-preview {
@@ -1849,6 +3186,64 @@ watch(paginatedItems, () => {
   color: white;
 }
 
+.grid-group-collage {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  grid-template-rows: repeat(2, 1fr);
+  gap: 4px;
+  width: 100%;
+  height: 100%;
+  padding: 6px;
+  background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+}
+
+.grid-group-collage-tile,
+.grid-group-collage-image {
+  width: 100%;
+  height: 100%;
+}
+
+.grid-group-collage-tile {
+  overflow: hidden;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.65);
+}
+
+.grid-group-collage-fallback,
+.grid-group-collage-empty {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #2563eb;
+  background: rgba(255, 255, 255, 0.74);
+}
+
+.grid-group-collage-empty {
+  grid-column: 1 / -1;
+  grid-row: 1 / -1;
+  border-radius: 12px;
+}
+
+.grid-group-badge {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.74);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .video-badge {
   position: absolute;
   bottom: 8px;
@@ -1861,25 +3256,33 @@ watch(paginatedItems, () => {
 }
 
 .grid-item-name {
-  margin-top: 8px;
   font-size: 14px;
-  text-align: center;
+  line-height: 1.4;
+  text-align: left;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  min-height: calc(1.4em * 2);
 }
 
 .grid-item-info {
-  margin-top: 4px;
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 8px;
   min-height: 24px;
+  margin-top: auto;
 }
 
 .grid-item-size {
+  min-width: 0;
   font-size: 12px;
   color: #909399;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .grid-item-actions {
@@ -1930,6 +3333,47 @@ watch(paginatedItems, () => {
   font-size: 13px;
 }
 
+.tg-context-menu {
+  position: fixed;
+  z-index: 2100;
+  min-width: 176px;
+  padding: 8px;
+  border-radius: 14px;
+  border: 1px solid #dbeafe;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.18);
+  backdrop-filter: blur(10px);
+}
+
+.tg-context-menu-item {
+  width: 100%;
+  padding: 9px 10px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  text-align: left;
+  font-size: 13px;
+  color: #0f172a;
+}
+
+.tg-context-menu-item:hover:not(:disabled) {
+  background: #eff6ff;
+}
+
+.tg-context-menu-item:disabled {
+  color: #94a3b8;
+}
+
+.tg-context-menu-item.is-danger {
+  color: #dc2626;
+}
+
+.tg-context-menu-separator {
+  height: 1px;
+  margin: 6px 4px;
+  background: #e2e8f0;
+}
+
 :deep(.drive-remote-popper .el-select-dropdown__item) {
   height: auto;
   min-height: 52px;
@@ -1955,7 +3399,29 @@ watch(paginatedItems, () => {
     align-items: stretch;
   }
 
-  .tg-file-trailing {
+  .tg-group-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .tg-group-hero-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .tg-stream-header-side {
+    justify-content: flex-start;
+  }
+
+  .tg-stream-search-input {
+    width: 100%;
+  }
+
+  .tg-list-header {
+    display: none;
+  }
+
+  .tg-file-size,
+  .tg-file-time,
+  .tg-file-actions-col {
     align-items: flex-start;
   }
 
@@ -1970,6 +3436,10 @@ watch(paginatedItems, () => {
   .sort-select,
   .search-input {
     width: 100%;
+  }
+
+  .tg-selection-bar {
+    align-items: stretch;
   }
 }
 </style>
