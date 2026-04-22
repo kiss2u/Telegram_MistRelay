@@ -472,7 +472,8 @@ class UpdateService:
                     f"$installer = '{self._ps_literal(installer_path)}'",
                     f"$appExe = '{self._ps_literal(app_executable)}'",
                     "try { Wait-Process -Id $targetPid -ErrorAction SilentlyContinue } catch { }",
-                    "Start-Process -FilePath $installer -ArgumentList '/S' -Wait",
+                    "$installerProcess = Start-Process -FilePath $installer -ArgumentList '/S' -PassThru -Wait",
+                    "if ($installerProcess.ExitCode -ne 0) { exit $installerProcess.ExitCode }",
                     "Start-Sleep -Seconds 2",
                     "if (Test-Path $appExe) { Start-Process -FilePath $appExe }",
                 ]

@@ -4,6 +4,7 @@ import base64
 import builtins
 import hashlib
 import json
+import shutil
 import sys
 import tempfile
 import unittest
@@ -397,6 +398,32 @@ class UpdateServiceSignatureVerificationTests(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(RuntimeError, "更新验签依赖缺失：_cffi_backend"):
                     service._verify_manifest(unittest.mock.Mock(), manifest_bytes, service._signature_url)
+
+
+class UpdateServiceWindowsInstallerScriptTests(unittest.TestCase):
+    def test_write_windows_update_script_restarts_only_after_successful_install(self) -> None:
+        service = UpdateService(
+            current_version="0.2.15-beta.8",
+            manifest_url="",
+            signature_url="",
+            release_feed_url="",
+            release_tag_prefix="desktop-qt-v",
+            manifest_asset_name="qt-latest.json",
+            signature_asset_name="qt-latest.json.sig",
+            verify_key="",
+        )
+
+        script_path = service._write_windows_update_script(
+            installer_path=Path(r"C:\Temp\mistrelay-setup.exe"),
+            app_executable=Path(r"C:\Users\demo\AppData\Local\Programs\MistRelay Desktop Qt\MistRelay Desktop Qt.exe"),
+            target_pid=4321,
+        )
+        self.addCleanup(shutil.rmtree, script_path.parent, True)
+
+        script = script_path.read_text(encoding="utf-8")
+        self.assertIn("$installerProcess = Start-Process -FilePath $installer -ArgumentList '/S' -PassThru -Wait", script)
+        self.assertIn("if ($installerProcess.ExitCode -ne 0) { exit $installerProcess.ExitCode }", script)
+        self.assertIn("if (Test-Path $appExe) { Start-Process -FilePath $appExe }", script)
 
 
 if __name__ == "__main__":
