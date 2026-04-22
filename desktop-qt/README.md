@@ -21,8 +21,8 @@
   - `qt-latest.json`
   - `qt-latest.json.sig`
 
-`version.json` 里的 `verify_key` 是 Qt 更新公钥，格式为 `Ed25519 VerifyKey` 原始 32 字节的 base64。
-GitHub Actions 使用独立私钥 `QT_UPDATE_PRIVATE_KEY` 生成 `qt-latest.json.sig`。
+`version.json` 里的 `verify_key` 是 Qt 更新公钥，格式为 `Ed25519 VerifyKey` 原始 32 字节的 base64，推荐直接提交到仓库。
+GitHub Actions 使用独立私钥 `QT_UPDATE_PRIVATE_KEY` 生成 `qt-latest.json.sig`，并优先使用 `QT_UPDATE_VERIFY_KEY` 覆盖公钥；如果未设置覆盖值，则回退到 `version.json.verify_key`，必要时再根据私钥推导公钥写入打包产物。
 Beta 客户端不会依赖 GitHub 的 `releases/latest/download`，而是通过 `release_feed_url` 从 GitHub Releases API 中筛选 `desktop-qt-v*` 的最新资产。
 
 ## 目录结构
@@ -103,7 +103,7 @@ python scripts/release_manifest.py keygen --output-dir build/update-keys
 生成结果：
 
 - `qt-update-private.key`: 放到 GitHub Secret `QT_UPDATE_PRIVATE_KEY`
-- `qt-update-public.key`: 把内容写入 `version.json.verify_key`，或由 CI 在构建前注入
+- `qt-update-public.key`: 推荐把内容写入 `version.json.verify_key`；也可以配置成 GitHub Secret `QT_UPDATE_VERIFY_KEY` 作为覆盖值
 
 ## GitHub Actions
 
@@ -112,12 +112,12 @@ python scripts/release_manifest.py keygen --output-dir build/update-keys
 需要的 Secrets：
 
 - `QT_UPDATE_PRIVATE_KEY`
-- `QT_UPDATE_VERIFY_KEY`
+- `QT_UPDATE_VERIFY_KEY`（可选，用于覆盖 `version.json.verify_key`）
 
 推送 `desktop-qt-v<semver>` tag 后会自动：
 
 - 同步 `version.json` 版本号
-- 注入 Qt 更新公钥
+- 解析并注入 Qt 更新公钥
 - 运行本地预发布检查
 - 构建 Windows 安装包
 - 生成并签名 `qt-latest.json`

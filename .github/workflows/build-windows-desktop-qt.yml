@@ -47,31 +47,69 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Sync Qt version and updater public key
-        shell: bash
-        env:
-          RELEASE_VERSION: ${{ steps.meta.outputs.version }}
-          QT_UPDATE_VERIFY_KEY: ${{ secrets.QT_UPDATE_VERIFY_KEY }}
-        run: |
-          python - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-
-          version_path = Path('desktop-qt/version.json')
-          payload = json.loads(version_path.read_text(encoding='utf-8'))
-          payload['version'] = os.environ['RELEASE_VERSION']
-          payload['verify_key'] = (os.environ.get('QT_UPDATE_VERIFY_KEY') or '').strip()
-          if not payload['verify_key']:
-              raise SystemExit('missing QT_UPDATE_VERIFY_KEY secret')
-          version_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
-          PY
-
       - name: Install desktop-qt dependencies
         shell: bash
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r desktop-qt/requirements.txt
+
+      - name: Sync Qt version and updater public key
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.meta.outputs.version }}
+          QT_UPDATE_VERIFY_KEY: ${{ secrets.QT_UPDATE_VERIFY_KEY }}
+          QT_UPDATE_PRIVATE_KEY: ${{ secrets.QT_UPDATE_PRIVATE_KEY }}
+        run: |
+          python - <<'PY'
+          import base64
+          import json
+          import os
+          from pathlib import Path
+
+          from nacl.signing import SigningKey
+
+          version_path = Path('desktop-qt/version.json')
+          payload = json.loads(version_path.read_text(encoding='utf-8'))
+          payload['version'] = os.environ['RELEASE_VERSION']
+
+          verify_key_secret = (os.environ.get('QT_UPDATE_VERIFY_KEY') or '').strip()
+          configured_verify_key = str(payload.get('verify_key') or '').strip()
+          private_key = (os.environ.get('QT_UPDATE_PRIVATE_KEY') or '').strip()
+
+          if verify_key_secret:
+              resolved_verify_key = verify_key_secret
+              verify_key_source = 'QT_UPDATE_VERIFY_KEY secret'
+          elif configured_verify_key:
+              resolved_verify_key = configured_verify_key
+              verify_key_source = 'desktop-qt/version.json verify_key'
+          elif private_key:
+              try:
+                  resolved_verify_key = base64.b64encode(
+                      bytes(SigningKey(base64.b64decode(private_key)).verify_key)
+                  ).decode('ascii')
+              except Exception as exc:
+                  raise SystemExit(
+                      f'failed to derive updater public key from QT_UPDATE_PRIVATE_KEY: {exc}'
+                  ) from exc
+              verify_key_source = 'QT_UPDATE_PRIVATE_KEY secret (derived)'
+          else:
+              raise SystemExit(
+                  'missing updater public key: set QT_UPDATE_VERIFY_KEY, populate '
+                  'desktop-qt/version.json verify_key, or provide QT_UPDATE_PRIVATE_KEY '
+                  'so CI can derive the public key'
+              )
+
+          payload['verify_key'] = resolved_verify_key
+          version_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+
+          github_env = os.environ.get('GITHUB_ENV')
+          if github_env:
+              with open(github_env, 'a', encoding='utf-8') as handle:
+                  handle.write(f'QT_UPDATE_VERIFY_KEY_RESOLVED={resolved_verify_key}\n')
+                  handle.write(f'QT_UPDATE_VERIFY_KEY_SOURCE={verify_key_source}\n')
+
+          print(f'Resolved updater public key from {verify_key_source}')
+          PY
 
       - name: Local release checks
         shell: bash
@@ -137,16 +175,18 @@ jobs:
           RELEASE_VERSION: ${{ steps.meta.outputs.version }}
           TAG_NAME: ${{ steps.meta.outputs.tag_name }}
           REPO: ${{ github.repository }}
-          QT_UPDATE_VERIFY_KEY: ${{ secrets.QT_UPDATE_VERIFY_KEY }}
+          QT_UPDATE_VERIFY_KEY_RESOLVED: ${{ env.QT_UPDATE_VERIFY_KEY_RESOLVED }}
+          QT_UPDATE_VERIFY_KEY_SOURCE: ${{ env.QT_UPDATE_VERIFY_KEY_SOURCE }}
           INSTALLER: ${{ steps.installer.outputs.installer }}
           INSTALLER_NAME: ${{ steps.installer.outputs.installer_name }}
         run: |
+          echo "Using updater public key from ${QT_UPDATE_VERIFY_KEY_SOURCE}"
           DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${TAG_NAME}/${INSTALLER_NAME}"
           python desktop-qt/scripts/release_manifest.py verify \
             --manifest qt-latest.json \
             --signature qt-latest.json.sig \
             --installer "${INSTALLER}" \
-            --public-key "${QT_UPDATE_VERIFY_KEY}" \
+            --public-key "${QT_UPDATE_VERIFY_KEY_RESOLVED}" \
             --version "${RELEASE_VERSION}" \
             --download-url "${DOWNLOAD_URL}"
 

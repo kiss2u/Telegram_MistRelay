@@ -18,6 +18,21 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def resolve_verify_key(payload: dict[str, object]) -> str:
+    return (
+        os.getenv("MISTRELAY_QT_UPDATE_VERIFY_KEY")
+        or os.getenv("QT_UPDATE_VERIFY_KEY")
+        or str(payload.get("verify_key") or "")
+    ).strip()
+
+
+def missing_verify_key_message() -> str:
+    return (
+        "missing update verify key: set MISTRELAY_QT_UPDATE_VERIFY_KEY or "
+        "QT_UPDATE_VERIFY_KEY, or populate desktop-qt/version.json verify_key"
+    )
+
+
 def main() -> int:
     args = parse_args()
     root = Path(__file__).resolve().parents[1]
@@ -42,13 +57,9 @@ def main() -> int:
             "beta channel cannot rely on GitHub releases/latest/download; use release_feed_url"
         )
 
-    verify_key = (
-        os.getenv("MISTRELAY_QT_UPDATE_VERIFY_KEY")
-        or os.getenv("QT_UPDATE_VERIFY_KEY")
-        or str(payload.get("verify_key") or "")
-    ).strip()
+    verify_key = resolve_verify_key(payload)
     if args.require_update_key and not verify_key:
-        raise SystemExit("version.json is missing verify_key")
+        raise SystemExit(missing_verify_key_message())
 
     required_paths = [
         root / "main.py",
