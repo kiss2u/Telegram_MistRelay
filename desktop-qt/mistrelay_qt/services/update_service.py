@@ -269,15 +269,31 @@ class UpdateService:
         try:
             from nacl.exceptions import BadSignatureError
             from nacl.signing import VerifyKey
+        except ModuleNotFoundError as exc:
+            raise self._missing_signature_dependency_error(exc, import_stage=True) from exc
 
+        try:
             verify_key = VerifyKey(base64.b64decode(self._verify_key))
             verify_key.verify(manifest_bytes, base64.b64decode(signature_text))
         except ModuleNotFoundError as exc:
-            raise RuntimeError("缺少 PyNaCl 依赖，无法校验更新签名") from exc
+            raise self._missing_signature_dependency_error(exc, import_stage=False) from exc
         except (ValueError, BadSignatureError) as exc:
             raise RuntimeError(f"更新清单验签失败：{exc}") from exc
 
         return True
+
+    def _missing_signature_dependency_error(
+        self,
+        exc: ModuleNotFoundError,
+        *,
+        import_stage: bool,
+    ) -> RuntimeError:
+        missing_name = str(exc.name or "").strip()
+        if import_stage and missing_name in {"nacl", "nacl.exceptions", "nacl.signing"}:
+            return RuntimeError("缺少 PyNaCl 依赖，无法校验更新签名")
+        if not missing_name:
+            missing_name = "未知模块"
+        return RuntimeError(f"更新验签依赖缺失：{missing_name}")
 
     def _resolve_platform_payload(self, payload: dict) -> dict:
         platforms = payload.get("platforms") or {}

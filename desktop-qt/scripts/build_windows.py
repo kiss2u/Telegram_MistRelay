@@ -36,6 +36,24 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def ensure_update_signature_runtime(portable_dir: Path) -> None:
+    runtime_root = portable_dir / "_internal" if (portable_dir / "_internal").exists() else portable_dir
+
+    if not (runtime_root / "nacl").exists():
+        raise SystemExit("PyInstaller output missing nacl package required for update signature verification.")
+    if not (runtime_root / "cffi").exists():
+        raise SystemExit("PyInstaller output missing cffi package required for update signature verification.")
+    if not (runtime_root / "pycparser").exists():
+        raise SystemExit("PyInstaller output missing pycparser package required for update signature verification.")
+    if not any(path.is_file() and path.name.startswith("_cffi_backend") for path in runtime_root.rglob("*")):
+        raise SystemExit("PyInstaller output missing _cffi_backend required for update signature verification.")
+    if not any(
+        path.is_file() and (path.name.startswith("_sodium") or "libsodium" in path.name.lower())
+        for path in runtime_root.rglob("*")
+    ):
+        raise SystemExit("PyInstaller output missing PyNaCl sodium runtime required for update signature verification.")
+
+
 def main() -> int:
     args = parse_args()
     version = load_version()
@@ -93,6 +111,14 @@ def main() -> int:
         "websockets",
         "--copy-metadata",
         "PyNaCl",
+        "--collect-all",
+        "nacl",
+        "--collect-all",
+        "cffi",
+        "--collect-all",
+        "pycparser",
+        "--hidden-import",
+        "_cffi_backend",
         "--hidden-import",
         "socksio",
         "--hidden-import",
@@ -118,6 +144,7 @@ def main() -> int:
     portable_dir = pyinstaller_dist / portable_name
     if not portable_dir.exists():
         raise SystemExit(f"PyInstaller output missing: {portable_dir}")
+    ensure_update_signature_runtime(portable_dir)
 
     if args.skip_installer:
         print(f"PyInstaller output: {portable_dir}")

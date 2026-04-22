@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import builtins
 import hashlib
 import json
 import sys
@@ -330,6 +332,71 @@ class UpdateServiceNetworkTests(unittest.TestCase):
                 with self._patch_http_client(httpx.MockTransport(handler), []):
                     with self.assertRaisesRegex(RuntimeError, r"下载安装包失败：HTTP 503"):
                         service.download_update(info)
+
+
+class UpdateServiceSignatureVerificationTests(unittest.TestCase):
+    def _make_signed_manifest(self) -> tuple[UpdateService, bytes, str]:
+        from nacl.signing import SigningKey
+
+        manifest_bytes = json.dumps(
+            {
+                "version": "0.2.15-beta.8",
+                "platforms": {
+                    "windows-x86_64": {
+                        "url": "https://example.invalid/setup.exe",
+                        "sha256": "deadbeef",
+                        "size": 42,
+                    }
+                },
+            }
+        ).encode("utf-8")
+        signing_key = SigningKey.generate()
+        verify_key = base64.b64encode(bytes(signing_key.verify_key)).decode("ascii")
+        signature = base64.b64encode(signing_key.sign(manifest_bytes).signature).decode("ascii")
+        service = UpdateService(
+            current_version="0.2.15-beta.7",
+            manifest_url="",
+            signature_url="https://example.invalid/qt-latest.json.sig",
+            release_feed_url="",
+            release_tag_prefix="desktop-qt-v",
+            manifest_asset_name="qt-latest.json",
+            signature_asset_name="qt-latest.json.sig",
+            verify_key=verify_key,
+        )
+        return service, manifest_bytes, signature
+
+    def test_verify_manifest_accepts_valid_signature(self) -> None:
+        service, manifest_bytes, signature = self._make_signed_manifest()
+
+        with patch.object(service, "_get_response", return_value=unittest.mock.Mock(text=signature)):
+            self.assertTrue(service._verify_manifest(unittest.mock.Mock(), manifest_bytes, service._signature_url))
+
+    def test_verify_manifest_reports_missing_pynacl_dependency(self) -> None:
+        service, manifest_bytes, signature = self._make_signed_manifest()
+        original_import = builtins.__import__
+
+        def failing_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if name == "nacl.signing":
+                raise ModuleNotFoundError("No module named 'nacl.signing'", name="nacl.signing")
+            return original_import(name, globals, locals, fromlist, level)
+
+        with patch.object(service, "_get_response", return_value=unittest.mock.Mock(text=signature)):
+            with patch("builtins.__import__", side_effect=failing_import):
+                with self.assertRaisesRegex(RuntimeError, "缺少 PyNaCl 依赖，无法校验更新签名"):
+                    service._verify_manifest(unittest.mock.Mock(), manifest_bytes, service._signature_url)
+
+    def test_verify_manifest_reports_missing_runtime_dependency(self) -> None:
+        service, manifest_bytes, signature = self._make_signed_manifest()
+        from nacl.signing import VerifyKey
+
+        with patch.object(service, "_get_response", return_value=unittest.mock.Mock(text=signature)):
+            with patch.object(
+                VerifyKey,
+                "verify",
+                side_effect=ModuleNotFoundError("No module named '_cffi_backend'", name="_cffi_backend"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "更新验签依赖缺失：_cffi_backend"):
+                    service._verify_manifest(unittest.mock.Mock(), manifest_bytes, service._signature_url)
 
 
 if __name__ == "__main__":
