@@ -176,6 +176,7 @@ class SettingsViewModel(BaseViewModel):
 
         self.updateProgressReported.connect(self._apply_update_progress)
 
+    @Slot()
     def bootstrap(self) -> None:
         if not self._bootstrapped:
             self._bootstrapped = True

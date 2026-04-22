@@ -31,6 +31,11 @@ QtObject {
     readonly property int radiusMedium: 18
     readonly property int radiusLarge: 24
     readonly property int pagePadding: 28
+    readonly property int pageCompactGap: 16
+    readonly property int pageSectionGap: 20
+    readonly property int compactBreakpoint: 960
+    readonly property int wideBreakpoint: 1320
+    readonly property int pageContentMaxWidth: 1400
     readonly property int cardPadding: 22
     readonly property int controlHeight: 48
     readonly property int sectionSpacing: 20

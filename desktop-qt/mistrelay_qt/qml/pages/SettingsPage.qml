@@ -4,17 +4,14 @@ import QtQuick.Layouts
 import "../theme" as ThemeSystem
 import "../components"
 
-Flickable {
+ResponsivePage {
     id: root
-
-    clip: true
-    contentWidth: width
-    contentHeight: contentColumn.implicitHeight
 
     property string scope: "client"
     property string clientTab: "connection"
     property string serverCategory: "telegram"
     property string managementTab: "docker"
+    readonly property int statColumns: compact ? 1 : (wide ? 4 : 2)
 
     function toneColor(tone) {
         switch (tone) {
@@ -90,108 +87,104 @@ Flickable {
         }
     }
 
-    ColumnLayout {
-        id: contentColumn
-        width: parent.width
-        spacing: ThemeSystem.Theme.sectionSpacing
+    GlassCard {
+        Layout.fillWidth: true
 
-        GlassCard {
-            Layout.fillWidth: true
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 16
 
-            ColumnLayout {
-                anchors.fill: parent
-                spacing: 16
+            Text {
+                text: "设置中心"
+                color: ThemeSystem.Theme.textPrimary
+                font.pixelSize: 22
+                font.bold: true
+                font.family: ThemeSystem.Theme.fontFamily
+            }
 
-                Text {
-                    text: "设置中心"
-                    color: ThemeSystem.Theme.textPrimary
-                    font.pixelSize: 22
-                    font.bold: true
-                    font.family: ThemeSystem.Theme.fontFamily
+            Text {
+                text: "客户端配置、服务端参数、Docker 运行状态、日志和自动更新现在统一由 PySide 状态层管理。"
+                wrapMode: Text.WordWrap
+                color: ThemeSystem.Theme.textSecondary
+                font.pixelSize: 14
+                font.family: ThemeSystem.Theme.fontFamily
+            }
+
+            Flow {
+                Layout.fillWidth: true
+                width: parent.width
+                spacing: 10
+
+                ScopeButton {
+                    buttonValue: "client"
+                    buttonLabel: "客户端设置"
                 }
 
+                ScopeButton {
+                    buttonValue: "server"
+                    buttonLabel: "服务端设置"
+                }
+
+                ScopeButton {
+                    buttonValue: "management"
+                    buttonLabel: "系统管理"
+                }
+            }
+
+            Rectangle {
+                visible: settingsViewModel.infoMessage.length > 0
+                Layout.fillWidth: true
+                radius: ThemeSystem.Theme.radiusMedium
+                color: ThemeSystem.Theme.successSoft
+                border.width: 1
+                border.color: "#86efac"
+                implicitHeight: infoBanner.implicitHeight + 20
+
                 Text {
-                    text: "客户端配置、服务端参数、Docker 运行状态、日志和自动更新现在统一由 PySide 状态层管理。"
+                    id: infoBanner
+                    anchors.fill: parent
+                    anchors.margins: 10
+                    text: settingsViewModel.infoMessage
                     wrapMode: Text.WordWrap
-                    color: ThemeSystem.Theme.textSecondary
-                    font.pixelSize: 14
+                    color: ThemeSystem.Theme.textPrimary
                     font.family: ThemeSystem.Theme.fontFamily
                 }
+            }
 
-                RowLayout {
-                    spacing: 10
+            Rectangle {
+                visible: settingsViewModel.errorMessage.length > 0
+                Layout.fillWidth: true
+                radius: ThemeSystem.Theme.radiusMedium
+                color: ThemeSystem.Theme.dangerSoft
+                border.width: 1
+                border.color: "#fca5a5"
+                implicitHeight: errorBanner.implicitHeight + 20
 
-                    ScopeButton {
-                        buttonValue: "client"
-                        buttonLabel: "客户端设置"
-                    }
-
-                    ScopeButton {
-                        buttonValue: "server"
-                        buttonLabel: "服务端设置"
-                    }
-
-                    ScopeButton {
-                        buttonValue: "management"
-                        buttonLabel: "系统管理"
-                    }
-                }
-
-                Rectangle {
-                    visible: settingsViewModel.infoMessage.length > 0
-                    Layout.fillWidth: true
-                    radius: ThemeSystem.Theme.radiusMedium
-                    color: ThemeSystem.Theme.successSoft
-                    border.width: 1
-                    border.color: "#86efac"
-                    implicitHeight: infoBanner.implicitHeight + 20
-
-                    Text {
-                        id: infoBanner
-                        anchors.fill: parent
-                        anchors.margins: 10
-                        text: settingsViewModel.infoMessage
-                        wrapMode: Text.WordWrap
-                        color: ThemeSystem.Theme.textPrimary
-                        font.family: ThemeSystem.Theme.fontFamily
-                    }
-                }
-
-                Rectangle {
-                    visible: settingsViewModel.errorMessage.length > 0
-                    Layout.fillWidth: true
-                    radius: ThemeSystem.Theme.radiusMedium
-                    color: ThemeSystem.Theme.dangerSoft
-                    border.width: 1
-                    border.color: "#fca5a5"
-                    implicitHeight: errorBanner.implicitHeight + 20
-
-                    Text {
-                        id: errorBanner
-                        anchors.fill: parent
-                        anchors.margins: 10
-                        text: settingsViewModel.errorMessage
-                        wrapMode: Text.WordWrap
-                        color: ThemeSystem.Theme.textPrimary
-                        font.family: ThemeSystem.Theme.fontFamily
-                    }
+                Text {
+                    id: errorBanner
+                    anchors.fill: parent
+                    anchors.margins: 10
+                    text: settingsViewModel.errorMessage
+                    wrapMode: Text.WordWrap
+                    color: ThemeSystem.Theme.textPrimary
+                    font.family: ThemeSystem.Theme.fontFamily
                 }
             }
         }
+    }
 
-        Item {
-            Layout.fillWidth: true
-            implicitHeight: scopeLoader.implicitHeight
+    Item {
+        Layout.fillWidth: true
+        implicitHeight: scopeLoader.implicitHeight
 
-            Loader {
-                id: scopeLoader
-                width: parent.width
-                sourceComponent: root.scope === "client"
-                                 ? clientScope
-                                 : root.scope === "server"
-                                   ? serverScope
-                                   : managementScope
-            }
+        Loader {
+            id: scopeLoader
+            width: parent.width
+            sourceComponent: root.scope === "client"
+                             ? clientScope
+                             : root.scope === "server"
+                               ? serverScope
+                               : managementScope
         }
     }
 
@@ -199,7 +192,7 @@ Flickable {
         id: clientScope
 
         ColumnLayout {
-            width: root.width
+            width: root.contentFrameWidth
             spacing: ThemeSystem.Theme.sectionSpacing
 
             GlassCard {
@@ -209,7 +202,9 @@ Flickable {
                     anchors.fill: parent
                     spacing: 14
 
-                    RowLayout {
+                    Flow {
+                        Layout.fillWidth: true
+                        width: parent.width
                         spacing: 10
 
                         FilterButton {
@@ -256,7 +251,7 @@ Flickable {
         id: clientConnectionTab
 
         ColumnLayout {
-            width: root.width
+            width: root.contentFrameWidth
             spacing: 14
 
             Text {
@@ -281,11 +276,15 @@ Flickable {
                 onTextEdited: settingsViewModel.setServerBaseUrl(text)
             }
 
-            RowLayout {
-                spacing: 12
+            GridLayout {
+                Layout.fillWidth: true
+                columns: root.compact ? 1 : 2
+                columnSpacing: 12
+                rowSpacing: 12
 
                 PrimaryButton {
                     text: "保存连接配置"
+                    Layout.fillWidth: root.compact
                     onClicked: settingsViewModel.save()
                 }
 
@@ -294,7 +293,9 @@ Flickable {
                           ? "当前地址：" + settingsViewModel.serverBaseUrl
                           : "尚未配置服务端地址"
                     color: ThemeSystem.Theme.textSecondary
+                    wrapMode: Text.WordWrap
                     font.family: ThemeSystem.Theme.fontFamily
+                    Layout.fillWidth: true
                     Layout.alignment: Qt.AlignVCenter
                 }
             }
@@ -305,7 +306,7 @@ Flickable {
         id: clientUpdateTab
 
         ColumnLayout {
-            width: root.width
+            width: root.contentFrameWidth
             spacing: 14
 
             Text {
@@ -357,7 +358,9 @@ Flickable {
                 font.family: ThemeSystem.Theme.fontFamily
             }
 
-            RowLayout {
+            Flow {
+                Layout.fillWidth: true
+                width: parent.width
                 spacing: 12
 
                 PrimaryButton {
@@ -386,7 +389,7 @@ Flickable {
         id: clientProxyTab
 
         ColumnLayout {
-            width: root.width
+            width: root.contentFrameWidth
             spacing: 14
 
             Text {
@@ -397,8 +400,11 @@ Flickable {
                 font.family: ThemeSystem.Theme.fontFamily
             }
 
-            RowLayout {
-                spacing: 12
+            GridLayout {
+                Layout.fillWidth: true
+                columns: root.compact ? 1 : 2
+                columnSpacing: 12
+                rowSpacing: 12
 
                 Switch {
                     checked: settingsViewModel.proxyEnabled
@@ -439,7 +445,7 @@ Flickable {
         id: clientDownloadTab
 
         ColumnLayout {
-            width: root.width
+            width: root.contentFrameWidth
             spacing: 14
 
             Text {
@@ -450,9 +456,11 @@ Flickable {
                 font.family: ThemeSystem.Theme.fontFamily
             }
 
-            RowLayout {
+            GridLayout {
                 Layout.fillWidth: true
-                spacing: 12
+                columns: root.compact ? 1 : 2
+                columnSpacing: 12
+                rowSpacing: 12
 
                 AppTextField {
                     Layout.fillWidth: true
@@ -463,12 +471,16 @@ Flickable {
 
                 Button {
                     text: "选择目录"
+                    Layout.fillWidth: root.compact
                     onClicked: settingsViewModel.pickDownloadDir()
                 }
             }
 
-            RowLayout {
-                spacing: 18
+            GridLayout {
+                Layout.fillWidth: true
+                columns: root.compact ? 1 : 2
+                columnSpacing: 18
+                rowSpacing: 18
 
                 ColumnLayout {
                     spacing: 8
@@ -518,7 +530,7 @@ Flickable {
         id: serverScope
 
         ColumnLayout {
-            width: root.width
+            width: root.contentFrameWidth
             spacing: ThemeSystem.Theme.sectionSpacing
 
             GlassCard {
@@ -543,7 +555,9 @@ Flickable {
                         font.family: ThemeSystem.Theme.fontFamily
                     }
 
-                    RowLayout {
+                    Flow {
+                        Layout.fillWidth: true
+                        width: parent.width
                         spacing: 10
 
                         Repeater {
@@ -559,7 +573,9 @@ Flickable {
                         }
                     }
 
-                    RowLayout {
+                    Flow {
+                        Layout.fillWidth: true
+                        width: parent.width
                         spacing: 12
 
                         PrimaryButton {
@@ -604,6 +620,7 @@ Flickable {
                                 text: parent.label
                                 color: ThemeSystem.Theme.textPrimary
                                 font.bold: true
+                                wrapMode: Text.WordWrap
                                 font.family: ThemeSystem.Theme.fontFamily
                             }
 
@@ -677,7 +694,9 @@ Flickable {
                         font.family: ThemeSystem.Theme.fontFamily
                     }
 
-                    RowLayout {
+                    Flow {
+                        Layout.fillWidth: true
+                        width: parent.width
                         spacing: 12
 
                         PrimaryButton {
@@ -699,7 +718,7 @@ Flickable {
         id: managementScope
 
         ColumnLayout {
-            width: root.width
+            width: root.contentFrameWidth
             spacing: ThemeSystem.Theme.sectionSpacing
 
             GlassCard {
@@ -709,7 +728,9 @@ Flickable {
                     anchors.fill: parent
                     spacing: 14
 
-                    RowLayout {
+                    Flow {
+                        Layout.fillWidth: true
+                        width: parent.width
                         spacing: 10
 
                         FilterButton {
@@ -722,10 +743,6 @@ Flickable {
                             text: "系统日志"
                             activeState: root.managementTab === "app-logs"
                             onClicked: root.managementTab = "app-logs"
-                        }
-
-                        Item {
-                            Layout.fillWidth: true
                         }
 
                         Button {
@@ -749,12 +766,14 @@ Flickable {
         id: dockerManagementTab
 
         ColumnLayout {
-            width: root.width
+            width: root.contentFrameWidth
             spacing: ThemeSystem.Theme.sectionSpacing
 
-            RowLayout {
+            GridLayout {
                 Layout.fillWidth: true
-                spacing: 18
+                columns: root.statColumns
+                columnSpacing: 18
+                rowSpacing: 18
 
                 Repeater {
                     model: settingsViewModel.resourceCards
@@ -768,8 +787,11 @@ Flickable {
                             anchors.fill: parent
                             spacing: 12
 
-                            RowLayout {
+                            GridLayout {
                                 Layout.fillWidth: true
+                                columns: root.compact ? 1 : 2
+                                columnSpacing: 10
+                                rowSpacing: 8
 
                                 Text {
                                     text: modelData.title
@@ -778,6 +800,7 @@ Flickable {
                                     font.bold: true
                                     font.family: ThemeSystem.Theme.fontFamily
                                     Layout.fillWidth: true
+                                    wrapMode: Text.WordWrap
                                 }
 
                                 Text {
@@ -786,6 +809,7 @@ Flickable {
                                     font.pixelSize: 18
                                     font.bold: true
                                     font.family: ThemeSystem.Theme.fontFamily
+                                    Layout.alignment: root.compact ? Qt.AlignLeft : Qt.AlignRight
                                 }
                             }
 
@@ -814,9 +838,11 @@ Flickable {
                 }
             }
 
-            RowLayout {
+            GridLayout {
                 Layout.fillWidth: true
-                spacing: 18
+                columns: root.compact ? 1 : 2
+                columnSpacing: 18
+                rowSpacing: 18
 
                 GlassCard {
                     Layout.fillWidth: true
@@ -844,14 +870,18 @@ Flickable {
                                 { label: "创建时间", value: settingsViewModel.dockerStatus.created || "-" }
                             ]
 
-                            delegate: RowLayout {
+                            delegate: GridLayout {
                                 Layout.fillWidth: true
+                                columns: root.compact ? 1 : 2
+                                columnSpacing: 12
+                                rowSpacing: 4
 
                                 Text {
                                     text: modelData.label
                                     color: ThemeSystem.Theme.textSecondary
                                     font.family: ThemeSystem.Theme.fontFamily
-                                    Layout.preferredWidth: 88
+                                    wrapMode: Text.WordWrap
+                                    Layout.minimumWidth: root.compact ? 0 : 88
                                 }
 
                                 Text {
@@ -859,6 +889,7 @@ Flickable {
                                     color: ThemeSystem.Theme.textPrimary
                                     font.bold: true
                                     font.family: ThemeSystem.Theme.fontFamily
+                                    wrapMode: Text.WordWrap
                                     Layout.fillWidth: true
                                 }
                             }
@@ -872,7 +903,9 @@ Flickable {
                             font.family: ThemeSystem.Theme.fontFamily
                         }
 
-                        RowLayout {
+                        Flow {
+                            Layout.fillWidth: true
+                            width: parent.width
                             spacing: 12
 
                             PrimaryButton {
@@ -897,8 +930,11 @@ Flickable {
                         anchors.fill: parent
                         spacing: 12
 
-                        RowLayout {
+                        GridLayout {
                             Layout.fillWidth: true
+                            columns: root.compact ? 1 : 2
+                            columnSpacing: 10
+                            rowSpacing: 8
 
                             Text {
                                 text: "Docker 日志"
@@ -914,6 +950,7 @@ Flickable {
                                 to: 500
                                 value: settingsViewModel.dockerLogLines
                                 onValueModified: settingsViewModel.setDockerLogLines(value)
+                                Layout.alignment: root.compact ? Qt.AlignLeft : Qt.AlignRight
                             }
                         }
 
@@ -933,7 +970,9 @@ Flickable {
                             color: "#e2e8f0"
                         }
 
-                        RowLayout {
+                        Flow {
+                            Layout.fillWidth: true
+                            width: parent.width
                             spacing: 12
 
                             Button {
@@ -956,7 +995,7 @@ Flickable {
         id: appLogsManagementTab
 
         ColumnLayout {
-            width: root.width
+            width: root.contentFrameWidth
             spacing: ThemeSystem.Theme.sectionSpacing
 
             GlassCard {
@@ -974,12 +1013,14 @@ Flickable {
                         font.family: ThemeSystem.Theme.fontFamily
                     }
 
-                    RowLayout {
+                    GridLayout {
                         Layout.fillWidth: true
-                        spacing: 10
+                        columns: root.compact ? 1 : 4
+                        columnSpacing: 10
+                        rowSpacing: 10
 
                         ComboBox {
-                            Layout.preferredWidth: 240
+                            Layout.fillWidth: true
                             model: settingsViewModel.logFilesModel
                             textRole: "name"
                             onActivated: function(index) {
@@ -990,7 +1031,7 @@ Flickable {
                         }
 
                         ComboBox {
-                            Layout.preferredWidth: 160
+                            Layout.fillWidth: true
                             model: ["", "ERROR", "WARNING", "INFO", "DEBUG"]
                             onActivated: function(index) {
                                 settingsViewModel.setLogLevel(model[index])
@@ -1015,7 +1056,9 @@ Flickable {
                         }
                     }
 
-                    RowLayout {
+                    Flow {
+                        Layout.fillWidth: true
+                        width: parent.width
                         spacing: 12
 
                         PrimaryButton {
@@ -1032,13 +1075,13 @@ Flickable {
                             text: "清空显示"
                             onClicked: settingsViewModel.clearAppLogDisplay()
                         }
+                    }
 
-                        Text {
-                            text: settingsViewModel.appLogSummary
-                            color: ThemeSystem.Theme.textSecondary
-                            font.family: ThemeSystem.Theme.fontFamily
-                            Layout.alignment: Qt.AlignVCenter
-                        }
+                    Text {
+                        text: settingsViewModel.appLogSummary
+                        color: ThemeSystem.Theme.textSecondary
+                        wrapMode: Text.WordWrap
+                        font.family: ThemeSystem.Theme.fontFamily
                     }
 
                     TextArea {
@@ -1116,7 +1159,11 @@ Flickable {
     Component {
         id: boolField
 
-        RowLayout {
+        GridLayout {
+            columns: root.compact ? 1 : 2
+            columnSpacing: 12
+            rowSpacing: 8
+
             Switch {
                 checked: Boolean(parent.fieldValue)
                 onToggled: settingsViewModel.setServerField(root.serverCategory, parent.fieldKey, checked)

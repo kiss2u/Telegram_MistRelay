@@ -1,14 +1,21 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+import httpx
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from mistrelay_qt.models import UpdateInfo
 from mistrelay_qt.services.update_service import UpdateService, compare_versions
 
 
@@ -91,6 +98,238 @@ class UpdateServiceReleaseFeedTests(unittest.TestCase):
                     }
                 ]
             )
+
+
+class UpdateServiceNetworkTests(unittest.TestCase):
+    def _patch_http_client(self, transport: httpx.MockTransport, captured: list[dict[str, object]]):
+        original_client = httpx.Client
+
+        def factory(*args, **kwargs):
+            captured.append(dict(kwargs))
+            kwargs["transport"] = transport
+            return original_client(*args, **kwargs)
+
+        return patch("httpx.Client", side_effect=factory)
+
+    def test_check_for_updates_follows_release_asset_redirects(self) -> None:
+        release_feed_url = "https://api.github.com/repos/example/project/releases?per_page=30"
+        manifest_url = "https://example.invalid/qt-latest.json"
+        signature_url = "https://example.invalid/qt-latest.json.sig"
+        installer_url = "https://example.invalid/mistrelay-setup.exe"
+
+        service = UpdateService(
+            current_version="0.2.15-beta.5",
+            manifest_url="",
+            signature_url="",
+            release_feed_url=release_feed_url,
+            release_tag_prefix="desktop-qt-v",
+            manifest_asset_name="qt-latest.json",
+            signature_asset_name="qt-latest.json.sig",
+            verify_key="",
+        )
+
+        manifest_payload = {
+            "version": "0.2.15-beta.6",
+            "notes": "redirect test",
+            "platforms": {
+                service._platform_key(): {
+                    "url": installer_url,
+                    "sha256": "deadbeef",
+                    "size": 10,
+                }
+            },
+        }
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            url = str(request.url)
+            if url == release_feed_url:
+                return httpx.Response(
+                    200,
+                    json=[
+                        {
+                            "tag_name": "desktop-qt-v0.2.15-beta.6",
+                            "draft": False,
+                            "assets": [
+                                {
+                                    "name": "qt-latest.json",
+                                    "browser_download_url": manifest_url,
+                                },
+                                {
+                                    "name": "qt-latest.json.sig",
+                                    "browser_download_url": signature_url,
+                                },
+                            ],
+                        }
+                    ],
+                    request=request,
+                )
+            if url == manifest_url:
+                return httpx.Response(
+                    302,
+                    headers={"Location": "https://cdn.example.invalid/qt-latest.json"},
+                    request=request,
+                )
+            if url == "https://cdn.example.invalid/qt-latest.json":
+                return httpx.Response(
+                    200,
+                    content=json.dumps(manifest_payload).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    request=request,
+                )
+            return httpx.Response(404, request=request)
+
+        captured: list[dict[str, object]] = []
+        with self._patch_http_client(httpx.MockTransport(handler), captured):
+            info = service.check_for_updates()
+
+        self.assertTrue(captured)
+        self.assertTrue(captured[0]["follow_redirects"])
+        self.assertTrue(info.available)
+        self.assertEqual(info.version, "0.2.15-beta.6")
+        self.assertEqual(info.manual_url, installer_url)
+
+    def test_check_for_updates_wraps_release_feed_http_errors(self) -> None:
+        release_feed_url = "https://api.github.com/repos/example/project/releases?per_page=30"
+        service = UpdateService(
+            current_version="0.2.15-beta.5",
+            manifest_url="",
+            signature_url="",
+            release_feed_url=release_feed_url,
+            release_tag_prefix="desktop-qt-v",
+            manifest_asset_name="qt-latest.json",
+            signature_asset_name="qt-latest.json.sig",
+            verify_key="",
+        )
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(403, request=request)
+
+        with self._patch_http_client(httpx.MockTransport(handler), []):
+            with self.assertRaisesRegex(RuntimeError, r"获取 Qt 发布列表失败：HTTP 403"):
+                service.check_for_updates()
+
+    def test_check_for_updates_wraps_signature_download_http_errors(self) -> None:
+        manifest_url = "https://example.invalid/qt-latest.json"
+        signature_url = "https://example.invalid/qt-latest.json.sig"
+        service = UpdateService(
+            current_version="0.2.15-beta.5",
+            manifest_url=manifest_url,
+            signature_url=signature_url,
+            release_feed_url="",
+            release_tag_prefix="desktop-qt-v",
+            manifest_asset_name="qt-latest.json",
+            signature_asset_name="qt-latest.json.sig",
+            verify_key="AAAA",
+        )
+
+        manifest_payload = {
+            "version": "0.2.15-beta.6",
+            "platforms": {
+                service._platform_key(): {
+                    "url": "https://example.invalid/mistrelay-setup.exe",
+                    "sha256": "deadbeef",
+                    "size": 10,
+                }
+            },
+        }
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            url = str(request.url)
+            if url == manifest_url:
+                return httpx.Response(
+                    200,
+                    content=json.dumps(manifest_payload).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    request=request,
+                )
+            if url == signature_url:
+                return httpx.Response(503, request=request)
+            return httpx.Response(404, request=request)
+
+        with self._patch_http_client(httpx.MockTransport(handler), []):
+            with self.assertRaisesRegex(RuntimeError, r"下载更新签名失败：HTTP 503"):
+                service.check_for_updates()
+
+    def test_download_update_follows_release_asset_redirects(self) -> None:
+        installer_url = "https://example.invalid/mistrelay-desktop-qt-v0.2.15-beta.6-setup.exe"
+        installer_bytes = b"mistrelay-installer"
+        digest = hashlib.sha256(installer_bytes).hexdigest()
+        service = UpdateService(
+            current_version="0.2.15-beta.5",
+            manifest_url="",
+            signature_url="",
+            release_feed_url="",
+            release_tag_prefix="desktop-qt-v",
+            manifest_asset_name="qt-latest.json",
+            signature_asset_name="qt-latest.json.sig",
+            verify_key="",
+        )
+        info = UpdateInfo(
+            available=True,
+            version="0.2.15-beta.6",
+            download_url=installer_url,
+            manual_url=installer_url,
+            sha256=digest,
+            size=len(installer_bytes),
+        )
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            url = str(request.url)
+            if url == installer_url:
+                return httpx.Response(
+                    302,
+                    headers={"Location": "https://cdn.example.invalid/mistrelay-setup.exe"},
+                    request=request,
+                )
+            if url == "https://cdn.example.invalid/mistrelay-setup.exe":
+                return httpx.Response(
+                    200,
+                    content=installer_bytes,
+                    headers={"Content-Length": str(len(installer_bytes))},
+                    request=request,
+                )
+            return httpx.Response(404, request=request)
+
+        captured: list[dict[str, object]] = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch("mistrelay_qt.services.update_service.updates_root", return_value=Path(temp_dir)):
+                with self._patch_http_client(httpx.MockTransport(handler), captured):
+                    downloaded = service.download_update(info)
+
+            self.assertTrue(captured)
+            self.assertTrue(captured[0]["follow_redirects"])
+            self.assertTrue(downloaded.installer_path.exists())
+            self.assertEqual(downloaded.installer_path.read_bytes(), installer_bytes)
+
+    def test_download_update_wraps_http_errors(self) -> None:
+        installer_url = "https://example.invalid/mistrelay-desktop-qt-v0.2.15-beta.6-setup.exe"
+        service = UpdateService(
+            current_version="0.2.15-beta.5",
+            manifest_url="",
+            signature_url="",
+            release_feed_url="",
+            release_tag_prefix="desktop-qt-v",
+            manifest_asset_name="qt-latest.json",
+            signature_asset_name="qt-latest.json.sig",
+            verify_key="",
+        )
+        info = UpdateInfo(
+            available=True,
+            version="0.2.15-beta.6",
+            download_url=installer_url,
+            manual_url=installer_url,
+            sha256=hashlib.sha256(b"payload").hexdigest(),
+            size=7,
+        )
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(503, request=request)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch("mistrelay_qt.services.update_service.updates_root", return_value=Path(temp_dir)):
+                with self._patch_http_client(httpx.MockTransport(handler), []):
+                    with self.assertRaisesRegex(RuntimeError, r"下载安装包失败：HTTP 503"):
+                        service.download_update(info)
 
 
 if __name__ == "__main__":

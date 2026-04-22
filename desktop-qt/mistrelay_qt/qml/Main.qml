@@ -11,6 +11,7 @@ ApplicationWindow {
     visible: true
     title: appViewModel.windowTitle
     color: ThemeSystem.Theme.surface
+    readonly property bool promptCompact: width < 760
 
     Component.onCompleted: Qt.callLater(function() {
         updateViewModel.startupCheck()
@@ -120,21 +121,26 @@ ApplicationWindow {
                     }
                 }
 
-                RowLayout {
+                GridLayout {
                     Layout.fillWidth: true
-                    spacing: 12
+                    columns: window.promptCompact ? 1 : 3
+                    columnSpacing: 12
+                    rowSpacing: 12
 
                     Button {
                         text: "稍后再说"
                         enabled: !updateViewModel.busy
+                        Layout.fillWidth: window.promptCompact
                         onClicked: updateViewModel.dismissPrompt()
                     }
 
                     Item {
+                        visible: !window.promptCompact
                         Layout.fillWidth: true
                     }
 
                     PrimaryButton {
+                        Layout.fillWidth: true
                         Layout.preferredWidth: 220
                         text: updateViewModel.busy
                               ? (updateViewModel.updateProgressPercent >= 0 ? "正在更新..." : "正在检查...")

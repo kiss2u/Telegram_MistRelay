@@ -38,10 +38,22 @@ Item {
                 Layout.fillHeight: true
                 currentIndex: appViewModel.currentRouteIndex
 
-                DashboardPage { }
-                DownloadsPage { }
-                DrivePage { }
-                SettingsPage { }
+                DashboardPage {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                }
+                DownloadsPage {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                }
+                DrivePage {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                }
+                SettingsPage {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                }
             }
         }
     }

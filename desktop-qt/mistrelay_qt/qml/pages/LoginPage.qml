@@ -9,8 +9,8 @@ Item {
 
     anchors.fill: parent
 
-    readonly property bool compactLayout: width < 1320 || height < 860
-    readonly property real pagePadding: Math.max(28, Math.min(64, width * 0.05))
+    readonly property bool compactLayout: width < ThemeSystem.Theme.wideBreakpoint || height < 860
+    readonly property real pagePadding: Math.max(ThemeSystem.Theme.pagePadding, Math.min(64, width * 0.05))
     readonly property real contentMaxWidth: compactLayout ? 760 : 1160
     readonly property real heroWidth: compactLayout ? contentMaxWidth : Math.max(460, Math.min(600, contentMaxWidth * 0.56))
     readonly property real formWidth: compactLayout ? contentMaxWidth : Math.max(400, Math.min(460, contentMaxWidth * 0.38))
@@ -70,7 +70,7 @@ Item {
                     ColumnLayout {
                         id: layout
                         width: parent.width
-                        spacing: 18
+                        spacing: ThemeSystem.Theme.pageSectionGap
 
                         GridLayout {
                             width: parent.width

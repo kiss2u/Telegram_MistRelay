@@ -4,12 +4,8 @@ import QtQuick.Layouts
 import "../theme" as ThemeSystem
 import "../components"
 
-Flickable {
+ResponsivePage {
     id: root
-
-    clip: true
-    contentWidth: width
-    contentHeight: contentColumn.implicitHeight
 
     function toneColor(tone) {
         switch (tone) {
@@ -61,15 +57,17 @@ Flickable {
         { label: "失败/取消", value: "failed" }
     ]
 
+    readonly property int statColumns: compact ? 1 : (wide ? 4 : 2)
+
     Component {
         id: filterChip
 
         Button {
             id: chip
 
-            required property string label
-            required property string value
-            required property string currentValue
+            property string label: ""
+            property string value: ""
+            property string currentValue: ""
 
             text: label
             checkable: true
@@ -104,19 +102,23 @@ Flickable {
             border.color: ThemeSystem.Theme.lineColor
             implicitHeight: contentLayout.implicitHeight + 24
 
-            RowLayout {
+            GridLayout {
                 id: contentLayout
                 anchors.fill: parent
                 anchors.margins: 12
-                spacing: 14
+                columns: root.compact ? 1 : 2
+                columnSpacing: 14
+                rowSpacing: 14
 
                 ColumnLayout {
                     Layout.fillWidth: true
-                    spacing: 6
+                    spacing: 8
 
-                    RowLayout {
+                    GridLayout {
                         Layout.fillWidth: true
-                        spacing: 10
+                        columns: root.compact ? 1 : 2
+                        columnSpacing: 10
+                        rowSpacing: 8
 
                         Text {
                             text: title
@@ -124,6 +126,7 @@ Flickable {
                             font.pixelSize: 15
                             font.bold: true
                             elide: Text.ElideRight
+                            wrapMode: root.compact ? Text.WordWrap : Text.NoWrap
                             Layout.fillWidth: true
                             font.family: ThemeSystem.Theme.fontFamily
                         }
@@ -135,6 +138,7 @@ Flickable {
                             border.color: root.toneColor(statusTone)
                             implicitHeight: 28
                             implicitWidth: statusText.implicitWidth + 18
+                            Layout.alignment: root.compact ? Qt.AlignLeft : Qt.AlignRight
 
                             Text {
                                 id: statusText
@@ -164,9 +168,11 @@ Flickable {
                         value: progressPercent
                     }
 
-                    RowLayout {
+                    GridLayout {
                         Layout.fillWidth: true
-                        spacing: 12
+                        columns: root.compact ? 1 : 3
+                        columnSpacing: 12
+                        rowSpacing: 6
 
                         Text {
                             text: sizeText
@@ -187,8 +193,8 @@ Flickable {
                             color: ThemeSystem.Theme.textTertiary
                             font.pixelSize: 12
                             font.family: ThemeSystem.Theme.fontFamily
+                            wrapMode: Text.WordWrap
                             Layout.fillWidth: true
-                            elide: Text.ElideRight
                         }
                     }
 
@@ -203,7 +209,9 @@ Flickable {
                     }
                 }
 
-                ColumnLayout {
+                Flow {
+                    Layout.fillWidth: true
+                    width: root.compact ? contentLayout.width : implicitWidth
                     spacing: 8
 
                     Button {
@@ -249,10 +257,13 @@ Flickable {
                 id: queueContent
                 anchors.fill: parent
                 anchors.margins: 12
-                spacing: 6
+                spacing: 8
 
-                RowLayout {
+                GridLayout {
                     Layout.fillWidth: true
+                    columns: root.compact ? 1 : 2
+                    columnSpacing: 10
+                    rowSpacing: 8
 
                     Text {
                         text: title
@@ -260,6 +271,7 @@ Flickable {
                         font.pixelSize: 15
                         font.bold: true
                         Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
                         font.family: ThemeSystem.Theme.fontFamily
                     }
 
@@ -270,6 +282,7 @@ Flickable {
                         border.color: root.toneColor(statusTone)
                         implicitHeight: 28
                         implicitWidth: statusBadgeText.implicitWidth + 18
+                        Layout.alignment: root.compact ? Qt.AlignLeft : Qt.AlignRight
 
                         Text {
                             id: statusBadgeText
@@ -295,6 +308,7 @@ Flickable {
                     text: meta
                     color: ThemeSystem.Theme.textTertiary
                     font.pixelSize: 12
+                    wrapMode: Text.WordWrap
                     font.family: ThemeSystem.Theme.fontFamily
                 }
             }
@@ -312,19 +326,23 @@ Flickable {
             border.color: ThemeSystem.Theme.lineColor
             implicitHeight: localContent.implicitHeight + 24
 
-            RowLayout {
+            GridLayout {
                 id: localContent
                 anchors.fill: parent
                 anchors.margins: 12
-                spacing: 14
+                columns: root.compact ? 1 : 2
+                columnSpacing: 14
+                rowSpacing: 14
 
                 ColumnLayout {
                     Layout.fillWidth: true
-                    spacing: 6
+                    spacing: 8
 
-                    RowLayout {
+                    GridLayout {
                         Layout.fillWidth: true
-                        spacing: 10
+                        columns: root.compact ? 1 : 2
+                        columnSpacing: 10
+                        rowSpacing: 8
 
                         Text {
                             text: title
@@ -332,7 +350,7 @@ Flickable {
                             font.pixelSize: 15
                             font.bold: true
                             Layout.fillWidth: true
-                            elide: Text.ElideRight
+                            wrapMode: Text.WordWrap
                             font.family: ThemeSystem.Theme.fontFamily
                         }
 
@@ -343,6 +361,7 @@ Flickable {
                             border.color: root.toneColor(statusTone)
                             implicitHeight: 28
                             implicitWidth: localStatusText.implicitWidth + 18
+                            Layout.alignment: root.compact ? Qt.AlignLeft : Qt.AlignRight
 
                             Text {
                                 id: localStatusText
@@ -372,9 +391,11 @@ Flickable {
                         value: progressPercent
                     }
 
-                    RowLayout {
+                    GridLayout {
                         Layout.fillWidth: true
-                        spacing: 12
+                        columns: root.compact ? 1 : 3
+                        columnSpacing: 12
+                        rowSpacing: 6
 
                         Text {
                             text: sizeText
@@ -394,7 +415,9 @@ Flickable {
                             text: metaSecondary
                             color: ThemeSystem.Theme.textTertiary
                             font.pixelSize: 12
+                            wrapMode: Text.WordWrap
                             font.family: ThemeSystem.Theme.fontFamily
+                            Layout.fillWidth: true
                         }
                     }
 
@@ -409,7 +432,9 @@ Flickable {
                     }
                 }
 
-                ColumnLayout {
+                Flow {
+                    Layout.fillWidth: true
+                    width: root.compact ? localContent.width : implicitWidth
                     spacing: 8
 
                     Button {
@@ -446,35 +471,38 @@ Flickable {
         }
     }
 
-    ColumnLayout {
-        id: contentColumn
-        width: parent.width
-        spacing: ThemeSystem.Theme.sectionSpacing
+    GlassCard {
+        Layout.fillWidth: true
 
-        GlassCard {
-            Layout.fillWidth: true
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 12
 
-            ColumnLayout {
-                anchors.fill: parent
-                spacing: 12
+            Text {
+                text: "任务中心"
+                color: ThemeSystem.Theme.textPrimary
+                font.pixelSize: 22
+                font.bold: true
+                font.family: ThemeSystem.Theme.fontFamily
+            }
 
-                Text {
-                    text: "任务中心"
-                    color: ThemeSystem.Theme.textPrimary
-                    font.pixelSize: 22
-                    font.bold: true
-                    font.family: ThemeSystem.Theme.fontFamily
-                }
+            Text {
+                text: downloadsViewModel.headline
+                color: ThemeSystem.Theme.textSecondary
+                font.pixelSize: 14
+                wrapMode: Text.WordWrap
+                font.family: ThemeSystem.Theme.fontFamily
+            }
 
-                Text {
-                    text: downloadsViewModel.headline
-                    color: ThemeSystem.Theme.textSecondary
-                    font.pixelSize: 14
-                    wrapMode: Text.WordWrap
-                    font.family: ThemeSystem.Theme.fontFamily
-                }
+            GridLayout {
+                Layout.fillWidth: true
+                columns: root.compact ? 1 : 2
+                columnSpacing: 12
+                rowSpacing: 12
 
-                RowLayout {
+                Flow {
+                    Layout.fillWidth: true
+                    width: parent.width
                     spacing: 10
 
                     Repeater {
@@ -499,373 +527,362 @@ Flickable {
                             }
                         }
                     }
+                }
 
-                    Item {
-                        Layout.fillWidth: true
-                    }
-
-                    PrimaryButton {
-                        text: downloadsViewModel.busy ? "刷新中..." : "刷新"
-                        enabled: !downloadsViewModel.busy
-                        onClicked: downloadsViewModel.refresh()
-                    }
+                PrimaryButton {
+                    text: downloadsViewModel.busy ? "刷新中..." : "刷新"
+                    enabled: !downloadsViewModel.busy
+                    Layout.fillWidth: root.compact
+                    Layout.alignment: root.compact ? Qt.AlignLeft : Qt.AlignRight
+                    onClicked: downloadsViewModel.refresh()
                 }
             }
         }
+    }
 
-        GridLayout {
-            Layout.fillWidth: true
-            columns: width > 1080 ? 4 : 2
-            columnSpacing: 18
-            rowSpacing: 18
+    GridLayout {
+        Layout.fillWidth: true
+        columns: root.statColumns
+        columnSpacing: 18
+        rowSpacing: 18
 
-            Repeater {
-                model: downloadsViewModel.summaryCards
+        Repeater {
+            model: downloadsViewModel.summaryCards
 
-                delegate: StatCard {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 180
-                    title: modelData.title
-                    value: modelData.value
-                    caption: modelData.caption
-                    tone: modelData.tone
-                }
+            delegate: StatCard {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 180
+                title: modelData.title
+                value: modelData.value
+                caption: modelData.caption
+                tone: modelData.tone
             }
         }
+    }
 
-        GlassCard {
-            Layout.fillWidth: true
-            backgroundColor: "#ffffffff"
+    GlassCard {
+        Layout.fillWidth: true
+        backgroundColor: "#ffffffff"
 
-            ColumnLayout {
-                anchors.fill: parent
-                spacing: 14
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 14
+
+            Text {
+                text: downloadsViewModel.runtimeNote
+                color: ThemeSystem.Theme.textSecondary
+                font.pixelSize: 14
+                wrapMode: Text.WordWrap
+                font.family: ThemeSystem.Theme.fontFamily
+            }
+
+            Rectangle {
+                visible: downloadsViewModel.infoMessage.length > 0
+                Layout.fillWidth: true
+                radius: ThemeSystem.Theme.radiusMedium
+                color: ThemeSystem.Theme.successSoft
+                border.width: 1
+                border.color: "#86efac"
+                implicitHeight: infoLabel.implicitHeight + 20
 
                 Text {
-                    text: downloadsViewModel.runtimeNote
+                    id: infoLabel
+                    anchors.fill: parent
+                    anchors.margins: 10
+                    text: downloadsViewModel.infoMessage
+                    wrapMode: Text.WordWrap
+                    color: ThemeSystem.Theme.textPrimary
+                    font.family: ThemeSystem.Theme.fontFamily
+                }
+            }
+
+            Rectangle {
+                visible: downloadsViewModel.errorMessage.length > 0
+                Layout.fillWidth: true
+                radius: ThemeSystem.Theme.radiusMedium
+                color: ThemeSystem.Theme.dangerSoft
+                border.width: 1
+                border.color: "#fca5a5"
+                implicitHeight: errorLabel.implicitHeight + 20
+
+                Text {
+                    id: errorLabel
+                    anchors.fill: parent
+                    anchors.margins: 10
+                    text: downloadsViewModel.errorMessage
+                    wrapMode: Text.WordWrap
+                    color: ThemeSystem.Theme.textPrimary
+                    font.family: ThemeSystem.Theme.fontFamily
+                }
+            }
+
+            ColumnLayout {
+                visible: downloadsViewModel.currentTab === "tasks"
+                Layout.fillWidth: true
+                spacing: 16
+
+                AppTextField {
+                    Layout.fillWidth: true
+                    text: downloadsViewModel.taskKeyword
+                    placeholderText: "搜索文件名、来源、状态"
+                    onTextEdited: downloadsViewModel.setTaskKeyword(text)
+                }
+
+                Flow {
+                    Layout.fillWidth: true
+                    width: parent.width
+                    spacing: 8
+
+                    Repeater {
+                        model: root.taskStatusOptions
+
+                        delegate: Loader {
+                            sourceComponent: filterChip
+
+                            onLoaded: {
+                                item.label = modelData.label
+                                item.value = modelData.value
+                                item.currentValue = Qt.binding(function() {
+                                    return downloadsViewModel.taskStatusFilter
+                                })
+                                item.clicked.connect(function() {
+                                    downloadsViewModel.setTaskStatusFilter(modelData.value)
+                                })
+                            }
+                        }
+                    }
+                }
+
+                Text {
+                    text: downloadsViewModel.taskFilterSummary
+                    color: ThemeSystem.Theme.textTertiary
+                    font.pixelSize: 12
+                    wrapMode: Text.WordWrap
+                    font.family: ThemeSystem.Theme.fontFamily
+                }
+
+                Text {
+                    text: "活跃下载"
+                    color: ThemeSystem.Theme.textPrimary
+                    font.pixelSize: 18
+                    font.bold: true
+                    font.family: ThemeSystem.Theme.fontFamily
+                }
+
+                Repeater {
+                    model: downloadsViewModel.activeDownloadsModel
+                    delegate: taskActionCard
+                }
+
+                Text {
+                    visible: downloadsViewModel.activeDownloadsModel.count === 0
+                    text: "当前没有匹配的下载任务。"
                     color: ThemeSystem.Theme.textSecondary
-                    font.pixelSize: 14
+                    font.family: ThemeSystem.Theme.fontFamily
+                }
+
+                Text {
+                    text: "活跃上传"
+                    color: ThemeSystem.Theme.textPrimary
+                    font.pixelSize: 18
+                    font.bold: true
+                    font.family: ThemeSystem.Theme.fontFamily
+                }
+
+                Repeater {
+                    model: downloadsViewModel.activeUploadsModel
+                    delegate: taskActionCard
+                }
+
+                Text {
+                    visible: downloadsViewModel.activeUploadsModel.count === 0
+                    text: "当前没有匹配的上传任务。"
+                    color: ThemeSystem.Theme.textSecondary
+                    font.family: ThemeSystem.Theme.fontFamily
+                }
+
+                Text {
+                    text: "记录组"
+                    color: ThemeSystem.Theme.textPrimary
+                    font.pixelSize: 18
+                    font.bold: true
+                    font.family: ThemeSystem.Theme.fontFamily
+                }
+
+                Repeater {
+                    model: downloadsViewModel.groupRecordsModel
+                    delegate: taskActionCard
+                }
+
+                Text {
+                    visible: downloadsViewModel.groupRecordsModel.count === 0
+                    text: "当前没有匹配的记录组。"
+                    color: ThemeSystem.Theme.textSecondary
+                    font.family: ThemeSystem.Theme.fontFamily
+                }
+            }
+
+            ColumnLayout {
+                visible: downloadsViewModel.currentTab === "queue"
+                Layout.fillWidth: true
+                spacing: 16
+
+                AppTextField {
+                    Layout.fillWidth: true
+                    text: downloadsViewModel.queueKeyword
+                    placeholderText: "搜索队列标题"
+                    onTextEdited: downloadsViewModel.setQueueKeyword(text)
+                }
+
+                Flow {
+                    Layout.fillWidth: true
+                    width: parent.width
+                    spacing: 8
+
+                    Repeater {
+                        model: root.queueTypeOptions
+
+                        delegate: Loader {
+                            sourceComponent: filterChip
+
+                            onLoaded: {
+                                item.label = modelData.label
+                                item.value = modelData.value
+                                item.currentValue = Qt.binding(function() {
+                                    return downloadsViewModel.queueTypeFilter
+                                })
+                                item.clicked.connect(function() {
+                                    downloadsViewModel.setQueueTypeFilter(modelData.value)
+                                })
+                            }
+                        }
+                    }
+                }
+
+                Text {
+                    text: downloadsViewModel.queueFilterSummary
+                    color: ThemeSystem.Theme.textTertiary
+                    font.pixelSize: 12
                     wrapMode: Text.WordWrap
                     font.family: ThemeSystem.Theme.fontFamily
                 }
 
                 Rectangle {
-                    visible: downloadsViewModel.infoMessage.length > 0
+                    visible: downloadsViewModel.queueFloodWaitText.length > 0
                     Layout.fillWidth: true
                     radius: ThemeSystem.Theme.radiusMedium
-                    color: ThemeSystem.Theme.successSoft
+                    color: ThemeSystem.Theme.warningSoft
                     border.width: 1
-                    border.color: "#86efac"
-                    implicitHeight: infoLabel.implicitHeight + 20
+                    border.color: "#fcd34d"
+                    implicitHeight: floodWaitText.implicitHeight + 20
 
                     Text {
-                        id: infoLabel
+                        id: floodWaitText
                         anchors.fill: parent
                         anchors.margins: 10
-                        text: downloadsViewModel.infoMessage
+                        text: downloadsViewModel.queueFloodWaitText
                         wrapMode: Text.WordWrap
                         color: ThemeSystem.Theme.textPrimary
                         font.family: ThemeSystem.Theme.fontFamily
                     }
                 }
 
-                Rectangle {
-                    visible: downloadsViewModel.errorMessage.length > 0
-                    Layout.fillWidth: true
-                    radius: ThemeSystem.Theme.radiusMedium
-                    color: ThemeSystem.Theme.dangerSoft
-                    border.width: 1
-                    border.color: "#fca5a5"
-                    implicitHeight: errorLabel.implicitHeight + 20
+                Text {
+                    text: "正在处理"
+                    color: ThemeSystem.Theme.textPrimary
+                    font.pixelSize: 18
+                    font.bold: true
+                    font.family: ThemeSystem.Theme.fontFamily
+                }
 
-                    Text {
-                        id: errorLabel
-                        anchors.fill: parent
-                        anchors.margins: 10
-                        text: downloadsViewModel.errorMessage
-                        wrapMode: Text.WordWrap
-                        color: ThemeSystem.Theme.textPrimary
-                        font.family: ThemeSystem.Theme.fontFamily
+                Repeater {
+                    model: downloadsViewModel.queueCurrentModel
+                    delegate: queueCard
+                }
+
+                Text {
+                    visible: downloadsViewModel.queueCurrentModel.count === 0
+                    text: "当前没有处理中任务。"
+                    color: ThemeSystem.Theme.textSecondary
+                    font.family: ThemeSystem.Theme.fontFamily
+                }
+
+                Text {
+                    text: "等待队列"
+                    color: ThemeSystem.Theme.textPrimary
+                    font.pixelSize: 18
+                    font.bold: true
+                    font.family: ThemeSystem.Theme.fontFamily
+                }
+
+                Repeater {
+                    model: downloadsViewModel.queueWaitingModel
+                    delegate: queueCard
+                }
+
+                Text {
+                    visible: downloadsViewModel.queueWaitingModel.count === 0
+                    text: "当前没有等待中的队列任务。"
+                    color: ThemeSystem.Theme.textSecondary
+                    font.family: ThemeSystem.Theme.fontFamily
+                }
+            }
+
+            ColumnLayout {
+                visible: downloadsViewModel.currentTab === "local"
+                Layout.fillWidth: true
+                spacing: 16
+
+                AppTextField {
+                    Layout.fillWidth: true
+                    text: downloadsViewModel.localKeyword
+                    placeholderText: "搜索文件名、保存位置、错误信息"
+                    onTextEdited: downloadsViewModel.setLocalKeyword(text)
+                }
+
+                Flow {
+                    Layout.fillWidth: true
+                    width: parent.width
+                    spacing: 8
+
+                    Repeater {
+                        model: root.localStatusOptions
+
+                        delegate: Loader {
+                            sourceComponent: filterChip
+
+                            onLoaded: {
+                                item.label = modelData.label
+                                item.value = modelData.value
+                                item.currentValue = Qt.binding(function() {
+                                    return downloadsViewModel.localStatusFilter
+                                })
+                                item.clicked.connect(function() {
+                                    downloadsViewModel.setLocalStatusFilter(modelData.value)
+                                })
+                            }
+                        }
                     }
                 }
 
-                ColumnLayout {
-                    visible: downloadsViewModel.currentTab === "tasks"
-                    Layout.fillWidth: true
-                    spacing: 16
-
-                    AppTextField {
-                        Layout.fillWidth: true
-                        text: downloadsViewModel.taskKeyword
-                        placeholderText: "搜索文件名、来源、状态"
-                        onTextEdited: downloadsViewModel.setTaskKeyword(text)
-                    }
-
-                    RowLayout {
-                        spacing: 8
-
-                        Repeater {
-                            model: root.taskStatusOptions
-
-                            delegate: Loader {
-                                sourceComponent: filterChip
-
-                                onLoaded: {
-                                    item.label = modelData.label
-                                    item.value = modelData.value
-                                    item.currentValue = Qt.binding(function() {
-                                        return downloadsViewModel.taskStatusFilter
-                                    })
-                                    item.clicked.connect(function() {
-                                        downloadsViewModel.setTaskStatusFilter(modelData.value)
-                                    })
-                                }
-                            }
-                        }
-
-                        Item {
-                            Layout.fillWidth: true
-                        }
-
-                        Text {
-                            text: downloadsViewModel.taskFilterSummary
-                            color: ThemeSystem.Theme.textTertiary
-                            font.pixelSize: 12
-                            font.family: ThemeSystem.Theme.fontFamily
-                        }
-                    }
-
-                    Text {
-                        text: "活跃下载"
-                        color: ThemeSystem.Theme.textPrimary
-                        font.pixelSize: 18
-                        font.bold: true
-                        font.family: ThemeSystem.Theme.fontFamily
-                    }
-
-                    Repeater {
-                        model: downloadsViewModel.activeDownloadsModel
-
-                        delegate: taskActionCard
-                    }
-
-                    Text {
-                        visible: downloadsViewModel.activeDownloadsModel.count === 0
-                        text: "当前没有匹配的下载任务。"
-                        color: ThemeSystem.Theme.textSecondary
-                        font.family: ThemeSystem.Theme.fontFamily
-                    }
-
-                    Text {
-                        text: "活跃上传"
-                        color: ThemeSystem.Theme.textPrimary
-                        font.pixelSize: 18
-                        font.bold: true
-                        font.family: ThemeSystem.Theme.fontFamily
-                    }
-
-                    Repeater {
-                        model: downloadsViewModel.activeUploadsModel
-
-                        delegate: taskActionCard
-                    }
-
-                    Text {
-                        visible: downloadsViewModel.activeUploadsModel.count === 0
-                        text: "当前没有匹配的上传任务。"
-                        color: ThemeSystem.Theme.textSecondary
-                        font.family: ThemeSystem.Theme.fontFamily
-                    }
-
-                    Text {
-                        text: "记录组"
-                        color: ThemeSystem.Theme.textPrimary
-                        font.pixelSize: 18
-                        font.bold: true
-                        font.family: ThemeSystem.Theme.fontFamily
-                    }
-
-                    Repeater {
-                        model: downloadsViewModel.groupRecordsModel
-
-                        delegate: taskActionCard
-                    }
-
-                    Text {
-                        visible: downloadsViewModel.groupRecordsModel.count === 0
-                        text: "当前没有匹配的记录组。"
-                        color: ThemeSystem.Theme.textSecondary
-                        font.family: ThemeSystem.Theme.fontFamily
-                    }
+                Text {
+                    text: downloadsViewModel.localFilterSummary
+                    color: ThemeSystem.Theme.textTertiary
+                    font.pixelSize: 12
+                    wrapMode: Text.WordWrap
+                    font.family: ThemeSystem.Theme.fontFamily
                 }
 
-                ColumnLayout {
-                    visible: downloadsViewModel.currentTab === "queue"
-                    Layout.fillWidth: true
-                    spacing: 16
-
-                    AppTextField {
-                        Layout.fillWidth: true
-                        text: downloadsViewModel.queueKeyword
-                        placeholderText: "搜索队列标题"
-                        onTextEdited: downloadsViewModel.setQueueKeyword(text)
-                    }
-
-                    RowLayout {
-                        spacing: 8
-
-                        Repeater {
-                            model: root.queueTypeOptions
-
-                            delegate: Loader {
-                                sourceComponent: filterChip
-
-                                onLoaded: {
-                                    item.label = modelData.label
-                                    item.value = modelData.value
-                                    item.currentValue = Qt.binding(function() {
-                                        return downloadsViewModel.queueTypeFilter
-                                    })
-                                    item.clicked.connect(function() {
-                                        downloadsViewModel.setQueueTypeFilter(modelData.value)
-                                    })
-                                }
-                            }
-                        }
-
-                        Item {
-                            Layout.fillWidth: true
-                        }
-
-                        Text {
-                            text: downloadsViewModel.queueFilterSummary
-                            color: ThemeSystem.Theme.textTertiary
-                            font.pixelSize: 12
-                            font.family: ThemeSystem.Theme.fontFamily
-                        }
-                    }
-
-                    Rectangle {
-                        visible: downloadsViewModel.queueFloodWaitText.length > 0
-                        Layout.fillWidth: true
-                        radius: ThemeSystem.Theme.radiusMedium
-                        color: ThemeSystem.Theme.warningSoft
-                        border.width: 1
-                        border.color: "#fcd34d"
-                        implicitHeight: floodWaitText.implicitHeight + 20
-
-                        Text {
-                            id: floodWaitText
-                            anchors.fill: parent
-                            anchors.margins: 10
-                            text: downloadsViewModel.queueFloodWaitText
-                            wrapMode: Text.WordWrap
-                            color: ThemeSystem.Theme.textPrimary
-                            font.family: ThemeSystem.Theme.fontFamily
-                        }
-                    }
-
-                    Text {
-                        text: "正在处理"
-                        color: ThemeSystem.Theme.textPrimary
-                        font.pixelSize: 18
-                        font.bold: true
-                        font.family: ThemeSystem.Theme.fontFamily
-                    }
-
-                    Repeater {
-                        model: downloadsViewModel.queueCurrentModel
-
-                        delegate: queueCard
-                    }
-
-                    Text {
-                        visible: downloadsViewModel.queueCurrentModel.count === 0
-                        text: "当前没有处理中任务。"
-                        color: ThemeSystem.Theme.textSecondary
-                        font.family: ThemeSystem.Theme.fontFamily
-                    }
-
-                    Text {
-                        text: "等待队列"
-                        color: ThemeSystem.Theme.textPrimary
-                        font.pixelSize: 18
-                        font.bold: true
-                        font.family: ThemeSystem.Theme.fontFamily
-                    }
-
-                    Repeater {
-                        model: downloadsViewModel.queueWaitingModel
-
-                        delegate: queueCard
-                    }
-
-                    Text {
-                        visible: downloadsViewModel.queueWaitingModel.count === 0
-                        text: "当前没有等待中的队列任务。"
-                        color: ThemeSystem.Theme.textSecondary
-                        font.family: ThemeSystem.Theme.fontFamily
-                    }
+                Repeater {
+                    model: downloadsViewModel.localDownloadsModel
+                    delegate: localCard
                 }
 
-                ColumnLayout {
-                    visible: downloadsViewModel.currentTab === "local"
-                    Layout.fillWidth: true
-                    spacing: 16
-
-                    AppTextField {
-                        Layout.fillWidth: true
-                        text: downloadsViewModel.localKeyword
-                        placeholderText: "搜索文件名、保存位置、错误信息"
-                        onTextEdited: downloadsViewModel.setLocalKeyword(text)
-                    }
-
-                    RowLayout {
-                        spacing: 8
-
-                        Repeater {
-                            model: root.localStatusOptions
-
-                            delegate: Loader {
-                                sourceComponent: filterChip
-
-                                onLoaded: {
-                                    item.label = modelData.label
-                                    item.value = modelData.value
-                                    item.currentValue = Qt.binding(function() {
-                                        return downloadsViewModel.localStatusFilter
-                                    })
-                                    item.clicked.connect(function() {
-                                        downloadsViewModel.setLocalStatusFilter(modelData.value)
-                                    })
-                                }
-                            }
-                        }
-
-                        Item {
-                            Layout.fillWidth: true
-                        }
-
-                        Text {
-                            text: downloadsViewModel.localFilterSummary
-                            color: ThemeSystem.Theme.textTertiary
-                            font.pixelSize: 12
-                            font.family: ThemeSystem.Theme.fontFamily
-                        }
-                    }
-
-                    Repeater {
-                        model: downloadsViewModel.localDownloadsModel
-
-                        delegate: localCard
-                    }
-
-                    Text {
-                        visible: downloadsViewModel.localDownloadsModel.count === 0
-                        text: "当前没有匹配的本地下载任务。"
-                        color: ThemeSystem.Theme.textSecondary
-                        font.family: ThemeSystem.Theme.fontFamily
-                    }
+                Text {
+                    visible: downloadsViewModel.localDownloadsModel.count === 0
+                    text: "当前没有匹配的本地下载任务。"
+                    color: ThemeSystem.Theme.textSecondary
+                    font.family: ThemeSystem.Theme.fontFamily
                 }
             }
         }

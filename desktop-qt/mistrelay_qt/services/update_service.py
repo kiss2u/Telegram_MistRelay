@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
@@ -85,9 +86,11 @@ class UpdateService:
 
         with self._client(timeout=20.0) as client:
             manifest_url, signature_url = self._resolve_manifest_endpoints(client)
-            manifest_response = client.get(manifest_url)
-            manifest_response.raise_for_status()
-            manifest_bytes = manifest_response.content
+            manifest_bytes = self._get_response(
+                client,
+                manifest_url,
+                stage="下载更新清单失败",
+            ).content
             signature_verified = self._verify_manifest(client, manifest_bytes, signature_url)
 
         payload = json.loads(manifest_bytes.decode("utf-8"))
@@ -168,21 +171,24 @@ class UpdateService:
         temp_path = installer_path.with_suffix(f"{installer_path.suffix}.part")
         digest = hashlib.sha256()
 
-        with self._client(timeout=120.0) as client:
-            with client.stream("GET", info.download_url) as response:
-                response.raise_for_status()
-                total = int(response.headers.get("Content-Length") or expected_size or 0)
-                downloaded = 0
+        try:
+            with self._client(timeout=120.0) as client:
+                with self._stream_response(client, info.download_url, stage="下载安装包失败") as response:
+                    total = int(response.headers.get("Content-Length") or expected_size or 0)
+                    downloaded = 0
 
-                with temp_path.open("wb") as handle:
-                    for chunk in response.iter_bytes(chunk_size=1024 * 256):
-                        if not chunk:
-                            continue
-                        handle.write(chunk)
-                        digest.update(chunk)
-                        downloaded += len(chunk)
-                        if on_progress:
-                            on_progress(downloaded, total, False)
+                    with temp_path.open("wb") as handle:
+                        for chunk in response.iter_bytes(chunk_size=1024 * 256):
+                            if not chunk:
+                                continue
+                            handle.write(chunk)
+                            digest.update(chunk)
+                            downloaded += len(chunk)
+                            if on_progress:
+                                on_progress(downloaded, total, False)
+        except Exception:
+            temp_path.unlink(missing_ok=True)
+            raise
 
         actual_size = temp_path.stat().st_size
         actual_digest = digest.hexdigest().lower()
@@ -251,8 +257,11 @@ class UpdateService:
         if not signature_url:
             raise RuntimeError("更新签名地址未配置")
 
-        signature_response = client.get(signature_url)
-        signature_response.raise_for_status()
+        signature_response = self._get_response(
+            client,
+            signature_url,
+            stage="下载更新签名失败",
+        )
         signature_text = signature_response.text.strip()
         if not signature_text:
             raise RuntimeError("更新签名文件为空")
@@ -293,6 +302,7 @@ class UpdateService:
 
         kwargs: dict[str, object] = {
             "timeout": timeout,
+            "follow_redirects": True,
             "headers": {
                 "User-Agent": APP_NAME,
                 "Accept": "application/json, application/vnd.github+json;q=0.9, */*;q=0.8",
@@ -305,12 +315,64 @@ class UpdateService:
 
     def _resolve_manifest_endpoints(self, client: "httpx.Client") -> tuple[str, str]:
         if self._release_feed_url:
-            response = client.get(self._release_feed_url)
-            response.raise_for_status()
+            response = self._get_response(
+                client,
+                self._release_feed_url,
+                stage="获取 Qt 发布列表失败",
+            )
             return self._select_release_assets(response.json())
         if not self._manifest_url:
             raise RuntimeError("更新清单地址未配置")
         return self._manifest_url, self._signature_url
+
+    def _get_response(self, client: "httpx.Client", url: str, *, stage: str) -> "httpx.Response":
+        try:
+            response = client.get(url)
+            response.raise_for_status()
+            return response
+        except Exception as exc:
+            if self._is_http_error(exc):
+                raise self._wrap_http_error(stage, exc) from exc
+            raise
+
+    @contextmanager
+    def _stream_response(self, client: "httpx.Client", url: str, *, stage: str):
+        try:
+            with client.stream("GET", url) as response:
+                response.raise_for_status()
+                yield response
+        except Exception as exc:
+            if self._is_http_error(exc):
+                raise self._wrap_http_error(stage, exc) from exc
+            raise
+
+    def _wrap_http_error(self, stage: str, exc: Exception) -> RuntimeError:
+        detail = self._http_error_detail(exc)
+        return RuntimeError(f"{stage}：{detail}" if detail else stage)
+
+    def _http_error_detail(self, exc: Exception) -> str:
+        try:
+            import httpx
+        except ModuleNotFoundError:
+            return str(exc).strip()
+
+        if isinstance(exc, httpx.HTTPStatusError):
+            status_code = exc.response.status_code
+            reason = str(exc.response.reason_phrase or "").strip()
+            return f"HTTP {status_code}{(' ' + reason) if reason else ''}"
+
+        if isinstance(exc, httpx.RequestError):
+            message = str(exc.args[0] if exc.args else exc).strip()
+            return " ".join(message.split())
+
+        return " ".join(str(exc).strip().split())
+
+    def _is_http_error(self, exc: Exception) -> bool:
+        try:
+            import httpx
+        except ModuleNotFoundError:
+            return False
+        return isinstance(exc, httpx.HTTPError)
 
     def _select_release_assets(self, releases_payload: object) -> tuple[str, str]:
         releases = releases_payload if isinstance(releases_payload, list) else []
