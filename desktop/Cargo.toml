@@ -1,6 +1,6 @@
 [package]
 name = "mistrelay-desktop"
-version = "0.2.9"
+version = "0.2.10"
 description = "MistRelay desktop shell"
 authors = ["Codex"]
 edition = "2021"

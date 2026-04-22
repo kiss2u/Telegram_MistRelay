@@ -53,6 +53,39 @@ jobs:
           cache: npm
           cache-dependency-path: desktop/package-lock.json
 
+      - name: Validate updater public key
+        shell: bash
+        run: |
+          node <<'SCRIPT'
+          const fs = require('fs')
+          const path = require('path')
+
+          const tauriConfigPath = path.join(process.cwd(), 'desktop', 'tauri.conf.json')
+          const config = JSON.parse(fs.readFileSync(tauriConfigPath, 'utf8'))
+          const pubkey = config?.plugins?.updater?.pubkey
+
+          if (typeof pubkey !== 'string' || !pubkey.trim()) {
+            console.error('ERROR: desktop/tauri.conf.json is missing plugins.updater.pubkey')
+            process.exit(1)
+          }
+
+          const lines = pubkey.trim().split(/\r?\n/).filter(Boolean)
+          if (/^[A-Za-z0-9+/=]+$/.test(pubkey.trim()) && lines.length === 1) {
+            console.error('ERROR: updater pubkey looks base64-encoded. Use raw minisign public key text instead.')
+            process.exit(1)
+          }
+
+          if (lines.length !== 2 || !lines[0].startsWith('untrusted comment: minisign public key:')) {
+            console.error('ERROR: updater pubkey must be the raw two-line minisign public key content.')
+            process.exit(1)
+          }
+
+          if (!/^[A-Za-z0-9+/=]+$/.test(lines[1])) {
+            console.error('ERROR: updater pubkey second line is not a valid minisign key payload.')
+            process.exit(1)
+          }
+          SCRIPT
+
       - name: Validate signing key
         shell: bash
         env:
@@ -151,21 +184,27 @@ jobs:
           EXE_NAME=$(basename "${SETUP_EXE}")
           SIG_CONTENT=$(cat "${SETUP_SIG}")
           DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${TAG_NAME}/${EXE_NAME}"
+          RELEASE_URL="https://github.com/${REPO}/releases/tag/${TAG_NAME}"
           PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-          cat > latest.json <<ENDJSON
-          {
-            "version": "${RELEASE_VERSION}",
-            "notes": "MistRelay Desktop v${RELEASE_VERSION}",
-            "pub_date": "${PUB_DATE}",
-            "platforms": {
-              "windows-x86_64": {
-                "signature": "${SIG_CONTENT}",
-                "url": "${DOWNLOAD_URL}"
-              }
-            }
+          export RELEASE_VERSION SIG_CONTENT DOWNLOAD_URL RELEASE_URL PUB_DATE
+          node <<'SCRIPT'
+          const fs = require('fs')
+
+          const payload = {
+            version: process.env.RELEASE_VERSION,
+            notes: `MistRelay Desktop v${process.env.RELEASE_VERSION}\n如果自动更新不可用，请手动下载安装包：${process.env.DOWNLOAD_URL}\nRelease 页面：${process.env.RELEASE_URL}`,
+            pub_date: process.env.PUB_DATE,
+            platforms: {
+              'windows-x86_64': {
+                signature: process.env.SIG_CONTENT,
+                url: process.env.DOWNLOAD_URL,
+              },
+            },
           }
-          ENDJSON
+
+          fs.writeFileSync('latest.json', `${JSON.stringify(payload, null, 2)}\n`)
+          SCRIPT
 
           echo "--- latest.json ---"
           cat latest.json

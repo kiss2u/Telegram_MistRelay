@@ -65,6 +65,13 @@
                 >
                   更新到 v{{ updateVersion }}
                 </el-button>
+                <el-button
+                  v-else-if="manualUpdateUrl"
+                  type="warning"
+                  @click="handleOpenManualUpdate"
+                >
+                  下载 {{ updateVersion ? `v${updateVersion}` : '最新版' }}
+                </el-button>
               </div>
             </div>
 
@@ -536,13 +543,15 @@ const installingUpdate = ref(false)
 const updateAvailable = ref(false)
 const updateVersion = ref('')
 const updateBody = ref('')
+const manualUpdateUrl = ref('')
 const updateStatusText = ref('')
-const updateStatus = ref<'idle' | 'available' | 'latest' | 'downloading' | 'error'>('idle')
+const updateStatus = ref<'idle' | 'available' | 'manual' | 'latest' | 'downloading' | 'error'>('idle')
 const updateProgressPercent = ref(-1)
 let pendingUpdate: Update | null = null
 
 const updateStatusLabel = computed(() => {
   if (updateStatus.value === 'available') return '有新版本'
+  if (updateStatus.value === 'manual') return '需手动更新'
   if (updateStatus.value === 'latest') return '已是最新'
   if (updateStatus.value === 'downloading') return '下载中'
   if (updateStatus.value === 'error') return '检查失败'
@@ -550,6 +559,7 @@ const updateStatusLabel = computed(() => {
 })
 const updateStatusTagType = computed(() => {
   if (updateStatus.value === 'available') return 'warning'
+  if (updateStatus.value === 'manual') return 'warning'
   if (updateStatus.value === 'latest') return 'success'
   if (updateStatus.value === 'downloading') return ''
   if (updateStatus.value === 'error') return 'danger'
@@ -902,10 +912,13 @@ async function handlePickDownloadDir() {
 
 async function handleCheckUpdate() {
   checkingUpdate.value = true
+  updateVersion.value = ''
   updateStatusText.value = ''
   updateStatus.value = 'idle'
   updateAvailable.value = false
   updateBody.value = ''
+  manualUpdateUrl.value = ''
+  updateProgressPercent.value = -1
   pendingUpdate = null
   try {
     const { result, update } = await checkForUpdate()
@@ -913,19 +926,19 @@ async function handleCheckUpdate() {
       updateAvailable.value = true
       updateVersion.value = result.version || ''
       updateBody.value = result.body || ''
+      manualUpdateUrl.value = ''
       updateStatus.value = 'available'
-      updateStatusText.value = result.body
-        ? `v${result.version} — ${result.body}`
-        : `v${result.version} 可用`
+      updateStatusText.value = result.message || `发现 v${result.version}`
       pendingUpdate = update
     } else if (result.available) {
       updateAvailable.value = false
       updateVersion.value = result.version || ''
+      manualUpdateUrl.value = result.manualUrl || ''
       updateBody.value = [result.body, result.manualUrl ? `下载地址：${result.manualUrl}` : '']
         .filter(Boolean)
         .join('\n')
-      updateStatus.value = 'available'
-      updateStatusText.value = result.message || `发现 v${result.version}`
+      updateStatus.value = 'manual'
+      updateStatusText.value = result.message || `发现 v${result.version}，请手动下载安装包更新`
       pendingUpdate = null
     } else {
       updateStatus.value = 'latest'
@@ -938,6 +951,15 @@ async function handleCheckUpdate() {
     ElMessage.error(updateStatusText.value)
   } finally {
     checkingUpdate.value = false
+  }
+}
+
+function handleOpenManualUpdate() {
+  if (!manualUpdateUrl.value) return
+
+  const popup = window.open(manualUpdateUrl.value, '_blank', 'noopener,noreferrer')
+  if (!popup) {
+    ElMessage.warning(`请手动打开下载地址：${manualUpdateUrl.value}`)
   }
 }
 

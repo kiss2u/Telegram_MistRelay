@@ -292,7 +292,7 @@ export async function checkForUpdate(): Promise<{ result: UpdateCheckResult; upd
       update,
     }
   } catch (nativeError: any) {
-    const nativeMessage = nativeError?.message || '自动更新服务不可用'
+    const nativeMessage = nativeError?.message?.trim() || '内置自动更新校验失败'
 
     try {
       const published = await getPublishedUpdateInfo()
@@ -306,6 +306,7 @@ export async function checkForUpdate(): Promise<{ result: UpdateCheckResult; upd
             body: published.notes,
             date: published.pubDate,
             installable: false,
+            manualUrl: published.downloadUrl,
             message: '当前已是最新版本',
             source: 'manifest',
           },
@@ -320,7 +321,8 @@ export async function checkForUpdate(): Promise<{ result: UpdateCheckResult; upd
           body: published.notes,
           date: published.pubDate,
           installable: false,
-          message: `发现 v${published.version}，但自动热更新当前不可用：${nativeMessage}`,
+          manualUrl: published.downloadUrl,
+          message: `发现 v${published.version}，但当前客户端无法自动更新，请手动下载安装包升级。原因：${nativeMessage}`,
           source: 'manifest',
         },
         update: null,
