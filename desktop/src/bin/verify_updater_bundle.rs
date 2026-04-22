@@ -60,7 +60,8 @@ fn run() -> Result<(), DynError> {
     let args = parse_args()?;
     let public_key = load_updater_public_key(&args.tauri_config)?;
     let signature_text = fs::read_to_string(&args.signature)?;
-    let signature = Signature::decode(signature_text.trim())
+    let signature_body = decode_base64_text(signature_text.trim(), "signature file")?;
+    let signature = Signature::decode(&signature_body)
         .map_err(|error| invalid_data(format!("failed to decode signature file: {error}")))?;
     let installer_bytes = fs::read(&args.installer)?;
 
@@ -135,14 +136,19 @@ fn print_usage() {
 fn load_updater_public_key(path: &PathBuf) -> Result<PublicKey, DynError> {
     let raw = fs::read_to_string(path)?;
     let config = serde_json::from_str::<TauriConfig>(&raw)?;
-    let decoded = STANDARD
-        .decode(config.plugins.updater.pubkey.trim())
-        .map_err(|error| invalid_data(format!("failed to decode updater pubkey: {error}")))?;
-    let pubkey_text = String::from_utf8(decoded)
-        .map_err(|error| invalid_data(format!("failed to decode updater pubkey text: {error}")))?;
+    let pubkey_text = decode_base64_text(config.plugins.updater.pubkey.trim(), "updater pubkey")?;
 
     PublicKey::decode(pubkey_text.trim())
         .map_err(|error| invalid_data(format!("failed to parse updater pubkey: {error}")).into())
+}
+
+fn decode_base64_text(value: &str, label: &str) -> Result<String, DynError> {
+    let decoded = STANDARD
+        .decode(value)
+        .map_err(|error| invalid_data(format!("failed to decode {label}: {error}")))?;
+
+    String::from_utf8(decoded)
+        .map_err(|error| invalid_data(format!("failed to decode {label} text: {error}")).into())
 }
 
 fn verify_manifest(args: &VerifyArgs, signature_text: &str) -> Result<(), DynError> {
