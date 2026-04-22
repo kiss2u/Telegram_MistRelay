@@ -334,7 +334,7 @@ Flickable {
                     id: updateStateText
                     anchors.fill: parent
                     anchors.margins: 11
-                    text: settingsViewModel.updateState
+                    text: updateViewModel.updateState
                     wrapMode: Text.WordWrap
                     color: ThemeSystem.Theme.textPrimary
                     font.family: ThemeSystem.Theme.fontFamily
@@ -342,16 +342,16 @@ Flickable {
             }
 
             ProgressBar {
-                visible: settingsViewModel.updateProgressPercent >= 0
+                visible: updateViewModel.updateProgressPercent >= 0
                 Layout.fillWidth: true
                 from: 0
                 to: 100
-                value: settingsViewModel.updateProgressPercent
+                value: updateViewModel.updateProgressPercent
             }
 
             Text {
-                visible: settingsViewModel.updateNotes.length > 0
-                text: settingsViewModel.updateNotes
+                visible: updateViewModel.updateNotes.length > 0
+                text: updateViewModel.updateNotes
                 wrapMode: Text.WordWrap
                 color: ThemeSystem.Theme.textSecondary
                 font.family: ThemeSystem.Theme.fontFamily
@@ -361,22 +361,22 @@ Flickable {
                 spacing: 12
 
                 PrimaryButton {
-                    text: settingsViewModel.busy ? "检查中..." : "检查更新"
-                    enabled: !settingsViewModel.busy
-                    onClicked: settingsViewModel.checkForUpdates()
+                    text: updateViewModel.busy ? "检查中..." : "检查更新"
+                    enabled: !updateViewModel.busy
+                    onClicked: updateViewModel.checkForUpdates()
                 }
 
                 PrimaryButton {
-                    visible: settingsViewModel.canInstallUpdate
-                    text: "更新到 v" + settingsViewModel.updateVersion
-                    enabled: !settingsViewModel.busy
-                    onClicked: settingsViewModel.installUpdate()
+                    visible: updateViewModel.canInstallUpdate
+                    text: "更新到 v" + updateViewModel.updateVersion
+                    enabled: !updateViewModel.busy
+                    onClicked: updateViewModel.installUpdate()
                 }
 
                 Button {
-                    visible: settingsViewModel.manualUrl.length > 0 && !settingsViewModel.canInstallUpdate
+                    visible: updateViewModel.manualUrl.length > 0 && !updateViewModel.canInstallUpdate
                     text: "手动下载安装"
-                    onClicked: settingsViewModel.openManualUpdateUrl()
+                    onClicked: updateViewModel.openManualUpdateUrl()
                 }
             }
         }

@@ -4,6 +4,7 @@ from .downloads import DownloadsViewModel
 from .drive import DriveViewModel
 from .login import LoginViewModel
 from .settings import SettingsViewModel
+from .update import UpdateViewModel
 
 __all__ = [
     "AppViewModel",
@@ -12,4 +13,5 @@ __all__ = [
     "DriveViewModel",
     "LoginViewModel",
     "SettingsViewModel",
+    "UpdateViewModel",
 ]

@@ -29,6 +29,7 @@ from .viewmodels import (
     DriveViewModel,
     LoginViewModel,
     SettingsViewModel,
+    UpdateViewModel,
 )
 
 
@@ -41,6 +42,7 @@ class ApplicationContext:
     downloads_view_model: DownloadsViewModel
     drive_view_model: DriveViewModel
     settings_view_model: SettingsViewModel
+    update_view_model: UpdateViewModel
 
 
 def app_version() -> str:
@@ -87,6 +89,11 @@ def build_application_context() -> ApplicationContext:
         local_runtime_service=local_runtime_service,
         task_runner=task_runner,
     )
+    update_view_model = UpdateViewModel(
+        update_service=update_service,
+        local_runtime_service=local_runtime_service,
+        task_runner=task_runner,
+    )
     settings_view_model = SettingsViewModel(
         api_client=api_client,
         config_service=config_service,
@@ -122,6 +129,7 @@ def build_application_context() -> ApplicationContext:
         downloads_view_model=downloads_view_model,
         drive_view_model=drive_view_model,
         settings_view_model=settings_view_model,
+        update_view_model=update_view_model,
     )
 
 
@@ -134,6 +142,7 @@ def attach_context(engine: QQmlApplicationEngine, context: ApplicationContext) -
     root_context.setContextProperty("downloadsViewModel", context.downloads_view_model)
     root_context.setContextProperty("driveViewModel", context.drive_view_model)
     root_context.setContextProperty("settingsViewModel", context.settings_view_model)
+    root_context.setContextProperty("updateViewModel", context.update_view_model)
 
 
 def main() -> int:
