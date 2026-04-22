@@ -53,6 +53,13 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r desktop-qt/requirements.txt
 
+      - name: Install NSIS
+        shell: powershell
+        run: |
+          choco install nsis --no-progress -y
+          $makensis = Get-Command makensis -ErrorAction Stop
+          Write-Host "makensis: $($makensis.Source)"
+
       - name: Sync Qt version and updater public key
         shell: bash
         env:
