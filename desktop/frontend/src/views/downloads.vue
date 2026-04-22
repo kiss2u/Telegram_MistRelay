@@ -12,14 +12,50 @@
 
           <el-card shadow="hover">
             <template #header>
-              <div class="flex justify-end items-center gap-4 flex-wrap">
-                <div class="flex gap-4 items-center">
+              <div class="task-center-header">
+                <div class="stats-row">
+                  <div class="stat-item is-active">
+                    <span class="stat-item-value">{{ activeDownloads.length }}</span>
+                    <span class="stat-item-label">下载中</span>
+                  </div>
+                  <div class="stat-item is-warning">
+                    <span class="stat-item-value">{{ activeUploads.length }}</span>
+                    <span class="stat-item-label">上传中</span>
+                  </div>
+                  <div class="stat-item is-success">
+                    <span class="stat-item-value">{{ groups.length }}</span>
+                    <span class="stat-item-label">记录组</span>
+                  </div>
+                  <div class="stat-item">
+                    <span class="stat-item-value">{{ totalGroupFiles }}</span>
+                    <span class="stat-item-label">总文件数</span>
+                  </div>
+                </div>
+
+                <div class="panel-toolbar">
+                  <el-input
+                    v-model="taskCenterKeyword"
+                    clearable
+                    :placeholder="taskCenterSearchPlaceholder"
+                    class="toolbar-search"
+                  />
+                  <el-select v-model="taskCenterStatusFilter" class="toolbar-filter">
+                    <el-option
+                      v-for="option in taskCenterStatusOptions"
+                      :key="option.value"
+                      :label="option.label"
+                      :value="option.value"
+                    />
+                  </el-select>
                   <el-select v-model="limit" @change="handleLimitChange" style="width: 150px">
                     <el-option label="显示 50 条" :value="50" />
                     <el-option label="显示 100 条" :value="100" />
                     <el-option label="显示 200 条" :value="200" />
                     <el-option label="显示 500 条" :value="500" />
                   </el-select>
+                  <div class="toolbar-meta">
+                    {{ taskCenterFilterSummary }}
+                  </div>
                   <el-button @click="handleRefresh" :icon="Refresh" type="primary" size="small">
                     刷新
                   </el-button>
@@ -51,14 +87,18 @@
               <span class="flex items-center gap-2">
                 <el-icon><Download /></el-icon>
                 下载
-                <el-tag v-if="activeDownloads.length > 0" size="small" type="warning">{{ activeDownloads.length }}</el-tag>
+                <el-tag v-if="filteredActiveDownloads.length > 0" size="small" type="warning">{{ filteredActiveDownloads.length }}</el-tag>
               </span>
             </template>
 
-            <el-empty v-if="activeDownloads.length === 0" description="当前没有正在下载/等待的任务" :image-size="80" />
+            <el-empty
+              v-if="filteredActiveDownloads.length === 0"
+              :description="activeDownloads.length === 0 ? '当前没有正在下载/等待的任务' : '当前筛选条件下没有匹配任务'"
+              :image-size="80"
+            />
             <div v-else>
               <el-table
-                :data="activeDownloads"
+                :data="filteredActiveDownloads"
                 stripe
                 size="small"
                 style="width: 100%"
@@ -142,13 +182,17 @@
               <span class="flex items-center gap-2">
                 <el-icon><Upload /></el-icon>
                 上传
-                <el-tag v-if="activeUploads.length > 0" size="small" type="warning">{{ activeUploads.length }}</el-tag>
+                <el-tag v-if="filteredActiveUploads.length > 0" size="small" type="warning">{{ filteredActiveUploads.length }}</el-tag>
               </span>
             </template>
             
-            <el-empty v-if="activeUploads.length === 0" description="当前没有正在上传的任务" :image-size="80" />
+            <el-empty
+              v-if="filteredActiveUploads.length === 0"
+              :description="activeUploads.length === 0 ? '当前没有正在上传的任务' : '当前筛选条件下没有匹配任务'"
+              :image-size="80"
+            />
             <div v-else>
-              <el-table :data="activeUploads" stripe size="small" style="width: 100%" row-key="id">
+              <el-table :data="filteredActiveUploads" stripe size="small" style="width: 100%" row-key="id">
                 <el-table-column prop="file_name" label="文件名" min-width="250" show-overflow-tooltip>
                   <template #default="{ row }">
                     <div class="file-info">
@@ -238,13 +282,19 @@
               <span class="flex items-center gap-2">
                 <el-icon><Files /></el-icon>
                 记录
-                <el-tag size="small" type="info">{{ groups.length }}</el-tag>
+                <el-tag size="small" type="info">{{ filteredGroups.length }}</el-tag>
               </span>
             </template>
 
-            <el-collapse v-model="activeGroups" accordion>
+            <el-empty
+              v-if="filteredGroups.length === 0"
+              :description="groups.length === 0 ? '暂无任务记录' : '当前筛选条件下没有匹配记录组'"
+              :image-size="80"
+            />
+
+            <el-collapse v-else v-model="activeGroups" accordion>
               <el-collapse-item
-                v-for="group in groups"
+                v-for="group in filteredGroups"
                 :key="group.group_key"
                 :name="group.group_key"
                 class="download-group-item"
@@ -395,7 +445,18 @@
             </span>
           </template>
 
-          <TasksView />
+          <QueuePanel />
+        </el-tab-pane>
+
+        <el-tab-pane name="local">
+          <template #label>
+            <span class="flex items-center gap-2">
+              <el-icon><FolderOpened /></el-icon>
+              本地下载
+            </span>
+          </template>
+
+          <LocalDownloadsPanel title="本地下载任务" />
         </el-tab-pane>
       </el-tabs>
     </el-card>
@@ -536,11 +597,11 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, Files, Document, Delete, InfoFilled, Download, Upload, Link, RefreshRight } from '@element-plus/icons-vue'
-import { List } from '@element-plus/icons-vue'
+import { Refresh, Files, Document, Delete, InfoFilled, Download, Upload, Link, RefreshRight, List, FolderOpened } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useIntervalFn } from '@vueuse/core'
-import TasksView from '@/views/tasks.vue'
+import LocalDownloadsPanel from '@/components/tasks/local-downloads-panel.vue'
+import QueuePanel from '@/components/tasks/queue-panel.vue'
 import { 
   getDownloads, 
   deleteAllDownloads, 
@@ -718,8 +779,10 @@ const isLoading = ref(true)
 const error = ref<string | null>(null)
 const limit = ref(100)
 const activeGroups = ref<string[]>([])
-const pageTab = ref<'center' | 'queue'>('center')
+const pageTab = ref<'center' | 'queue' | 'local'>('center')
 const taskCenterTab = ref<'download' | 'upload' | 'records'>('download')
+const taskCenterKeyword = ref('')
+const taskCenterStatusFilter = ref('all')
 const detailDialogVisible = ref(false)
 const selectedRecord = ref<DownloadRecord | null>(null)
 const autoDeleteAfterUpload = ref<boolean>(true) // 默认启用自动清理
@@ -778,14 +841,15 @@ function openGroupForActiveRow(row: ActiveDownloadRow) {
 }
 
 function syncPageTabFromRoute() {
-  pageTab.value = route.query.tab === 'queue' ? 'queue' : 'center'
+  const currentTab = Array.isArray(route.query.tab) ? route.query.tab[0] : route.query.tab
+  pageTab.value = currentTab === 'queue' || currentTab === 'local' ? currentTab : 'center'
 }
 
 function handlePageTabChange(name: string | number) {
-  const nextTab = name === 'queue' ? 'queue' : 'center'
+  const nextTab = name === 'queue' || name === 'local' ? name : 'center'
   const nextQuery = { ...route.query }
-  if (nextTab === 'queue') {
-    nextQuery.tab = 'queue'
+  if (nextTab !== 'center') {
+    nextQuery.tab = nextTab
   } else {
     delete nextQuery.tab
   }
@@ -812,6 +876,135 @@ const activeUploads = computed<UploadRecord[]>(() => {
   const sorted = [...filtered]
   sorted.sort(stableSortUploads)
   return sorted
+})
+
+const totalGroupFiles = computed(() => {
+  return groups.value.reduce((acc, group) => acc + (group.stats.total_files || 0), 0)
+})
+
+const taskCenterSearchPlaceholder = computed(() => {
+  if (taskCenterTab.value === 'download') return '搜索来源、文件名、状态'
+  if (taskCenterTab.value === 'upload') return '搜索文件名、上传目标、远程路径'
+  return '搜索消息组、文件名、远程路径'
+})
+
+const taskCenterStatusOptions = computed(() => {
+  if (taskCenterTab.value === 'download') {
+    return [
+      { label: '全部状态', value: 'all' },
+      { label: '下载中', value: 'downloading' },
+      { label: '等待中', value: 'pending' },
+    ]
+  }
+
+  if (taskCenterTab.value === 'upload') {
+    return [
+      { label: '全部状态', value: 'all' },
+      { label: '上传中', value: 'uploading' },
+      { label: '等待中', value: 'pending' },
+      { label: '等待下载', value: 'waiting_download' },
+    ]
+  }
+
+  return [
+    { label: '全部状态', value: 'all' },
+    { label: '处理中', value: 'processing' },
+    { label: '已完成', value: 'completed' },
+    { label: '失败', value: 'failed' },
+    { label: '已跳过', value: 'skipped' },
+  ]
+})
+
+function recordMatchesKeyword(record: DownloadRecord, query: string, groupTitle = ''): boolean {
+  if (!query) return true
+
+  return [
+    record.file_name,
+    record.source_url,
+    record.remote_path,
+    record.caption,
+    record.error_message,
+    groupTitle,
+    getRecordStatusText(record),
+  ].some((value) => String(value || '').toLowerCase().includes(query))
+}
+
+const filteredActiveDownloads = computed<ActiveDownloadRow[]>(() => {
+  const query = taskCenterKeyword.value.trim().toLowerCase()
+
+  return activeDownloads.value.filter((row) => {
+    if (taskCenterStatusFilter.value !== 'all' && row.status !== taskCenterStatusFilter.value) {
+      return false
+    }
+
+    return recordMatchesKeyword(row, query, row.group_title)
+  })
+})
+
+const filteredActiveUploads = computed<UploadRecord[]>(() => {
+  const query = taskCenterKeyword.value.trim().toLowerCase()
+
+  return activeUploads.value.filter((upload) => {
+    if (taskCenterStatusFilter.value !== 'all' && upload.status !== taskCenterStatusFilter.value) {
+      return false
+    }
+
+    if (!query) return true
+
+    return [
+      upload.file_name,
+      upload.remote_path,
+      upload.upload_target,
+      getUploadStatusText(upload.status, upload.upload_target),
+    ].some((value) => String(value || '').toLowerCase().includes(query))
+  })
+})
+
+function getGroupAggregateState(group: DownloadGroup): 'processing' | 'completed' | 'failed' | 'skipped' {
+  const skipped = group.stats.skipped || 0
+  const realFailed = Math.max((group.stats.failed || 0) - skipped, 0)
+
+  if (group.stats.downloading > 0 || group.stats.pending > 0) return 'processing'
+  if (realFailed > 0) return 'failed'
+  if (skipped > 0) return 'skipped'
+  return 'completed'
+}
+
+const filteredGroups = computed<DownloadGroup[]>(() => {
+  const query = taskCenterKeyword.value.trim().toLowerCase()
+
+  return groups.value.filter((group) => {
+    if (taskCenterStatusFilter.value !== 'all' && getGroupAggregateState(group) !== taskCenterStatusFilter.value) {
+      return false
+    }
+
+    if (!query) return true
+
+    const title = getGroupTitle(group)
+    const groupMatches = [
+      title,
+      group.caption,
+      group.message_id,
+      group.group_type,
+      formatDate(group.created_at || group.message_date),
+    ].some((value) => String(value || '').toLowerCase().includes(query))
+
+    if (groupMatches) return true
+
+    return (group.downloads || []).some((download) => recordMatchesKeyword(download, query, title))
+  })
+})
+
+const taskCenterFilterSummary = computed(() => {
+  if (taskCenterTab.value === 'download') {
+    return `匹配 ${filteredActiveDownloads.value.length} / ${activeDownloads.value.length} 条下载任务`
+  }
+
+  if (taskCenterTab.value === 'upload') {
+    return `匹配 ${filteredActiveUploads.value.length} / ${activeUploads.value.length} 条上传任务`
+  }
+
+  return `匹配 ${filteredGroups.value.length} / ${groups.value.length} 个记录组`
 })
 
 
@@ -859,6 +1052,11 @@ function handleRefresh() {
 function handleLimitChange() {
   handleRefresh()
 }
+
+watch(taskCenterTab, () => {
+  taskCenterStatusFilter.value = 'all'
+  taskCenterKeyword.value = ''
+})
 
 function getGroupProgress(stats: DownloadGroup['stats']): number {
   if (stats.total_size === 0) return 0
@@ -1488,10 +1686,58 @@ function updateGroupStats(group: DownloadGroup) {
   border-color: rgba(102, 126, 234, 0.2);
 }
 
-.downloads-page :deep(.el-card__header) {
+.tasks-center-page :deep(.el-card__header) {
   background: linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(249, 250, 251, 0.9));
   border-bottom: 1px solid rgba(229, 231, 235, 0.8);
   padding: 20px 24px;
+}
+
+.task-center-header {
+  @apply flex flex-col gap-5;
+}
+
+.stats-row {
+  @apply flex flex-wrap items-center gap-6;
+}
+
+.stat-item {
+  @apply flex items-center gap-2;
+}
+
+.stat-item-value {
+  @apply text-2xl font-bold text-slate-900;
+}
+
+.stat-item-label {
+  @apply text-sm font-medium text-slate-500;
+}
+
+.stat-item.is-active .stat-item-value {
+  color: #2563eb;
+}
+
+.stat-item.is-warning .stat-item-value {
+  color: #d97706;
+}
+
+.stat-item.is-success .stat-item-value {
+  color: #059669;
+}
+
+.panel-toolbar {
+  @apply flex flex-col gap-3 lg:flex-row lg:items-center;
+}
+
+.toolbar-search {
+  @apply lg:max-w-sm;
+}
+
+.toolbar-filter {
+  @apply lg:w-44;
+}
+
+.toolbar-meta {
+  @apply text-sm text-slate-500 lg:ml-auto;
 }
 
 .download-groups {

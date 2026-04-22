@@ -36,11 +36,6 @@
         <template #title>我的网盘</template>
       </el-menu-item>
 
-      <el-menu-item index="/local-downloads" class="menu-item">
-        <el-icon><FolderOpened /></el-icon>
-        <template #title>本地下载</template>
-      </el-menu-item>
-      
       <el-menu-item index="/settings" class="menu-item">
         <el-icon><Setting /></el-icon>
         <template #title>系统设置</template>
@@ -72,7 +67,6 @@ import {
   Odometer,
   Download,
   Folder,
-  FolderOpened,
   Setting,
   Tools,
   Expand,

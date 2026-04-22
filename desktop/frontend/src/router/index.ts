@@ -40,8 +40,7 @@ const routes: RouteRecordRaw[] = [
   },
   {
     path: '/local-downloads',
-    name: 'LocalDownloads',
-    component: () => import('@/views/local-downloads.vue')
+    redirect: '/downloads?tab=local'
   },
   {
     path: '/system',
