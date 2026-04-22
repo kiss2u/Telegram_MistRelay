@@ -1924,10 +1924,12 @@ dependencies = [
 
 [[package]]
 name = "mistrelay-desktop"
-version = "0.2.12"
+version = "0.2.13"
 dependencies = [
+ "base64 0.22.1",
  "dirs",
  "mime_guess",
+ "minisign-verify",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

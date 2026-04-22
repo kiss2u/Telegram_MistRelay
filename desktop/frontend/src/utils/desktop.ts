@@ -198,6 +198,7 @@ export interface UpdateCheckResult {
   message?: string
   installable?: boolean
   manualUrl?: string
+  reasonCode?: 'known_v0210_pubkey_bug' | 'native_updater_failed'
   source?: 'native' | 'manifest'
 }
 
@@ -207,6 +208,8 @@ interface PublishedUpdateInfo {
   pubDate?: string
   downloadUrl?: string
 }
+
+const KNOWN_BROKEN_UPDATER_VERSION = '0.2.10'
 
 function normalizeVersion(value: string): string[] {
   return value
@@ -239,6 +242,10 @@ function compareVersions(left: string, right: string): number {
   }
 
   return 0
+}
+
+function isKnownBrokenUpdaterVersion(value: string): boolean {
+  return compareVersions(value, KNOWN_BROKEN_UPDATER_VERSION) === 0
 }
 
 async function getPublishedUpdateInfo(): Promise<PublishedUpdateInfo> {
@@ -314,6 +321,14 @@ export async function checkForUpdate(): Promise<{ result: UpdateCheckResult; upd
         }
       }
 
+      const reasonCode = isKnownBrokenUpdaterVersion(__APP_VERSION__)
+        ? 'known_v0210_pubkey_bug'
+        : 'native_updater_failed'
+      const message =
+        reasonCode === 'known_v0210_pubkey_bug'
+          ? `v0.2.10 内置更新密钥配置有误，无法自动升级到 v${published.version}；请手动下载安装包升级一次，升级后后续版本恢复自动更新。`
+          : `发现 v${published.version}，但当前客户端无法自动更新，请手动下载安装包升级。原因：${nativeMessage}`
+
       return {
         result: {
           available: true,
@@ -322,7 +337,8 @@ export async function checkForUpdate(): Promise<{ result: UpdateCheckResult; upd
           date: published.pubDate,
           installable: false,
           manualUrl: published.downloadUrl,
-          message: `发现 v${published.version}，但当前客户端无法自动更新，请手动下载安装包升级。原因：${nativeMessage}`,
+          message,
+          reasonCode,
           source: 'manifest',
         },
         update: null,

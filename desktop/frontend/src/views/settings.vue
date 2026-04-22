@@ -506,7 +506,7 @@ import { getConfig, updateConfig, reloadConfig, getRcloneConfig, saveRcloneConfi
 import SystemManagementPanel from '@/components/settings/system-management-panel.vue'
 import { useAuthStore } from '@/stores/auth'
 import { checkServerConnection } from '@/utils/connection'
-import { DEFAULT_DOWNLOAD_CONFIG, getDefaultDesktopDownloadDir, getDesktopClientConfig, isValidDesktopProxyUrl, pickDesktopDownloadDir, restartDesktopApp, saveDesktopClientConfig, checkForUpdate, downloadAndInstallUpdate, type UpdateProgress } from '@/utils/desktop'
+import { DEFAULT_DOWNLOAD_CONFIG, getDefaultDesktopDownloadDir, getDesktopClientConfig, isValidDesktopProxyUrl, pickDesktopDownloadDir, restartDesktopApp, saveDesktopClientConfig, checkForUpdate, downloadAndInstallUpdate, type UpdateCheckResult, type UpdateProgress } from '@/utils/desktop'
 import type { Update } from '@tauri-apps/plugin-updater'
 import { getServerBaseUrl, isValidServerBaseUrl, setServerBaseUrl } from '@/utils/runtime'
 import { useRoute, useRouter } from 'vue-router'
@@ -563,8 +563,11 @@ const updateBody = ref('')
 const manualUpdateUrl = ref('')
 const updateStatusText = ref('')
 const updateStatus = ref<'idle' | 'available' | 'manual' | 'latest' | 'downloading' | 'error'>('idle')
+const updateReasonCode = ref<UpdateCheckResult['reasonCode']>()
 const updateProgressPercent = ref(-1)
 let pendingUpdate: Update | null = null
+const KNOWN_UPDATER_ISSUE_NOTE =
+  '已知兼容性：v0.2.10 内置更新密钥配置有误，需要手动升级一次；升级完成后，后续版本将恢复自动更新。'
 
 const updateStatusLabel = computed(() => {
   if (updateStatus.value === 'available') return '有新版本'
@@ -1073,6 +1076,7 @@ async function handleCheckUpdate() {
   updateAvailable.value = false
   updateBody.value = ''
   manualUpdateUrl.value = ''
+  updateReasonCode.value = undefined
   updateProgressPercent.value = -1
   pendingUpdate = null
   try {
@@ -1082,6 +1086,7 @@ async function handleCheckUpdate() {
       updateVersion.value = result.version || ''
       updateBody.value = result.body || ''
       manualUpdateUrl.value = ''
+      updateReasonCode.value = undefined
       updateStatus.value = 'available'
       updateStatusText.value = result.message || `发现 v${result.version}`
       pendingUpdate = update
@@ -1089,13 +1094,21 @@ async function handleCheckUpdate() {
       updateAvailable.value = false
       updateVersion.value = result.version || ''
       manualUpdateUrl.value = result.manualUrl || ''
-      updateBody.value = [result.body, result.manualUrl ? `下载地址：${result.manualUrl}` : '']
+      updateReasonCode.value = result.reasonCode
+      const extraNotes =
+        updateReasonCode.value === 'known_v0210_pubkey_bug' ? [KNOWN_UPDATER_ISSUE_NOTE] : []
+      updateBody.value = [result.body, ...extraNotes, result.manualUrl ? `下载地址：${result.manualUrl}` : '']
         .filter(Boolean)
         .join('\n')
       updateStatus.value = 'manual'
-      updateStatusText.value = result.message || `发现 v${result.version}，请手动下载安装包更新`
+      updateStatusText.value =
+        result.message ||
+        (updateReasonCode.value === 'known_v0210_pubkey_bug'
+          ? `v0.2.10 内置更新密钥配置有误，请手动下载安装包升级到 v${result.version}`
+          : `发现 v${result.version}，请手动下载安装包更新`)
       pendingUpdate = null
     } else {
+      updateReasonCode.value = undefined
       updateStatus.value = 'latest'
       updateStatusText.value = result.message || '当前已是最新版本'
     }

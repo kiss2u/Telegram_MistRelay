@@ -174,6 +174,8 @@ MistRelay/
 
 前往 [Releases](https://github.com/qianlong520/Telegram_MistRelay/releases) 下载最新的 Windows 安装包。
 
+已知兼容性：如果当前桌面客户端是 `v0.2.10`，由于该版本内置 updater 密钥配置错误，升级到 `v0.2.11+` 需要先手动下载安装包一次；完成后后续版本会恢复自动更新。
+
 ### 桌面端开发
 
 ```bash
@@ -209,6 +211,7 @@ GitHub Actions 中的 `TAURI_SIGNING_PRIVATE_KEY` 必须填写 `MistRelay.key` �
 ### CI 自动构建
 
 推送 `v*` 或 `desktop-v*` tag 会自动触发 GitHub Actions 构建 Windows 安装包并创建 Release。
+工作流会在发布前校验安装包签名、`latest.json` 和内置 updater `pubkey` 是否一致，任一不匹配都会阻止发布。
 
 ```bash
 git tag -a v0.1.1 -m "v0.1.1"
@@ -242,6 +245,14 @@ Dockerfile 使用多阶段构建：
 2. `python` 阶段通过 aiohttp 提供 API 服务，并将 `/` 路由指向前端 `index.html`。
 
 ## 📝 更新日志
+
+### [0.2.13] - 2026-04-21 (桌面更新链路加固)
+- **🔄 已知升级问题定向提示**:
+  - `v0.2.10` 现在会被识别为已知 updater 密钥配置错误版本，检查到新版本时明确提示“需手动升级一次”。
+  - 其他版本仍保留通用回退逻辑：原生 updater 校验失败时改为给出手动下载安装包入口，不再只报模糊错误。
+- **🛡️ 发布前自动验签**:
+  - Windows Release 工作流新增安装包、`.sig`、`latest.json` 与内置 updater `pubkey` 的一致性校验。
+  - 若签名、下载地址或版本号不匹配，CI 会在创建 Release 前直接失败，避免再次发布出“能发现更新但无法自动安装”的客户端。
 
 ### [0.2.3] - 2026-03-13 (本地下载操作补齐)
 - **🧰 本地下载补足核心操作**:

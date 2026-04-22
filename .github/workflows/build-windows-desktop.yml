@@ -218,6 +218,33 @@ jobs:
           echo "--- latest.json ---"
           cat latest.json
 
+      - name: Verify updater bundle
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.meta.outputs.version }}
+          REPO: ${{ github.repository }}
+          TAG_NAME: ${{ steps.meta.outputs.tag_name }}
+        run: |
+          NSIS_DIR="desktop/target/release/bundle/nsis"
+
+          SETUP_EXE=$(ls "${NSIS_DIR}"/*-setup.exe 2>/dev/null | head -1)
+          SETUP_SIG=$(ls "${NSIS_DIR}"/*-setup.exe.sig 2>/dev/null | head -1)
+
+          if [[ -z "${SETUP_EXE}" || -z "${SETUP_SIG}" ]]; then
+            echo "ERROR: could not find NSIS setup exe or signature file"
+            ls -la "${NSIS_DIR}"/
+            exit 1
+          fi
+
+          cargo run --quiet --locked --manifest-path desktop/Cargo.toml --bin verify_updater_bundle -- \
+            --tauri-config desktop/tauri.conf.json \
+            --manifest latest.json \
+            --installer "${SETUP_EXE}" \
+            --signature "${SETUP_SIG}" \
+            --version "${RELEASE_VERSION}" \
+            --tag "${TAG_NAME}" \
+            --repo "${REPO}"
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
