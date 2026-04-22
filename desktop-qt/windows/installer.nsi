@@ -35,11 +35,11 @@ InstallDirRegKey HKCU "Software\${APP_ID}" "InstallDir"
 ShowInstDetails show
 ShowUnInstDetails show
 
-Function CloseRunningApp
+!macro CloseRunningApp
   ClearErrors
   ExecWait '"$SYSDIR\taskkill.exe" /IM "${MAIN_EXE}" /T /F' $0
   Sleep 1000
-FunctionEnd
+!macroend
 
 Page directory
 Page instfiles
@@ -47,7 +47,7 @@ UninstPage uninstConfirm
 UninstPage instfiles
 
 Section "Install"
-  Call CloseRunningApp
+  !insertmacro CloseRunningApp
   SetOutPath "$INSTDIR"
   RMDir /r "$INSTDIR"
   File /r "${SOURCE_DIR}\*.*"
@@ -69,7 +69,7 @@ Section "Install"
 SectionEnd
 
 Section "Uninstall"
-  Call CloseRunningApp
+  !insertmacro CloseRunningApp
   Delete "$DESKTOP\${APP_NAME}.lnk"
   Delete "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk"
   RMDir "$SMPROGRAMS\${APP_NAME}"
