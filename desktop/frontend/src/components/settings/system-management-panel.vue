@@ -1,6 +1,6 @@
 <template>
   <div class="system-page">
-    <el-tabs v-model="activeTab" class="system-tabs">
+    <el-tabs v-model="activeTabModel" class="system-tabs">
       <el-tab-pane label="容器管理" name="docker">
         <el-row :gutter="20">
           <el-col :xs="24" :lg="12">
@@ -156,7 +156,7 @@
           <el-skeleton v-if="loadingDockerLogs && !wsConnected" :rows="10" animated />
 
           <div v-else class="logs-container" ref="dockerLogsContainerRef">
-            <pre class="logs-content" ref="logsContentRef">{{ dockerLogs }}</pre>
+            <pre class="logs-content">{{ dockerLogs }}</pre>
           </div>
 
           <el-empty v-if="!dockerLogs && !wsConnected" description="无法获取容器日志" />
@@ -253,20 +253,32 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, RefreshRight, VideoPlay, VideoPause, Delete, Download, Search } from '@element-plus/icons-vue'
 import { getDockerStatus, restartDocker, getDockerLogs, getLogFiles, getLogContent, getLogDownloadUrl } from '@/api'
-import type { DockerStatus } from '@/types/api'
 import type { LogFile } from '@/api'
+import type { DockerStatus } from '@/types/api'
 import { formatDate } from '@/utils/formatters'
 import { buildWsUrl } from '@/utils/websocket'
 
-const route = useRoute()
-const router = useRouter()
+type ManagementTab = 'docker' | 'app-logs'
 
-const activeTab = ref<'docker' | 'app-logs'>('docker')
+const props = defineProps<{
+  modelValue: ManagementTab
+}>()
+
+const emit = defineEmits<{
+  'update:modelValue': [value: ManagementTab]
+}>()
+
+const activeTabModel = computed({
+  get: () => props.modelValue,
+  set: (value: ManagementTab) => {
+    emit('update:modelValue', value)
+  },
+})
+
 const dockerStatus = ref<DockerStatus | null>(null)
 const dockerLogs = ref<string>('')
 const loadingStatus = ref(false)
@@ -279,7 +291,6 @@ const wsConnected = ref(false)
 const connecting = ref(false)
 const ws = ref<WebSocket | null>(null)
 const dockerLogsContainerRef = ref<HTMLElement | null>(null)
-const logsContentRef = ref<HTMLElement | null>(null)
 
 const logFiles = ref<LogFile[]>([])
 const appLogLines = ref<string[]>([])
@@ -293,27 +304,13 @@ const keyword = ref<string>('')
 const tailCount = ref<number>(200)
 const currentFileName = ref<string>('')
 
-function syncTabFromRoute() {
-  activeTab.value = route.query.tab === 'app-logs' ? 'app-logs' : 'docker'
-}
-
-function updateTabQuery(tab: 'docker' | 'app-logs') {
-  const nextQuery = { ...route.query }
-  if (tab === 'app-logs') {
-    nextQuery.tab = 'app-logs'
-  } else {
-    delete nextQuery.tab
-  }
-  router.replace({ path: '/system', query: nextQuery })
-}
-
 function fetchDockerStatus() {
   loadingStatus.value = true
   getDockerStatus()
-    .then(data => {
+    .then((data) => {
       dockerStatus.value = data
     })
-    .catch(err => {
+    .catch((err) => {
       console.error('获取Docker状态失败:', err)
       ElMessage.error('获取Docker状态失败')
     })
@@ -345,20 +342,17 @@ function startLogStream() {
     ws.value.onopen = () => {
       wsConnected.value = true
       connecting.value = false
-      // 清空现有日志，准备接收流式日志
       dockerLogs.value = ''
     }
 
     ws.value.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data)
-        
+
         if (data.type === 'history') {
           dockerLogs.value = data.logs || ''
-        } else if (data.type === 'log' || data.type === 'line') { // line passed from backend is 'line', but let's handle 'log' too just in case
-          // Append new log line
+        } else if (data.type === 'log' || data.type === 'line') {
           dockerLogs.value += (dockerLogs.value ? '\n' : '') + (data.line || '')
-          // Auto scroll to bottom
           nextTick(() => {
             if (dockerLogsContainerRef.value) {
               dockerLogsContainerRef.value.scrollTop = dockerLogsContainerRef.value.scrollHeight
@@ -367,8 +361,8 @@ function startLogStream() {
         } else if (data.type === 'error') {
           ElMessage.error(data.message || '日志流错误')
         }
-      } catch (e) {
-        console.error('解析WebSocket消息失败:', e)
+      } catch (err) {
+        console.error('解析WebSocket消息失败:', err)
       }
     }
 
@@ -383,8 +377,8 @@ function startLogStream() {
       wsConnected.value = false
       connecting.value = false
     }
-  } catch (e) {
-    console.error('建立WebSocket连接失败:', e)
+  } catch (err) {
+    console.error('建立WebSocket连接失败:', err)
     ElMessage.error('无法建立日志流连接')
     connecting.value = false
   }
@@ -392,10 +386,8 @@ function startLogStream() {
 
 function handleDockerLogLinesChange() {
   if (wsConnected.value) {
-    // 如果正在流式传输，重新连接以应用新的行数设置
     startLogStream()
   } else {
-    // 否则只是获取静态日志
     fetchDockerLogs()
   }
 }
@@ -403,7 +395,7 @@ function handleDockerLogLinesChange() {
 function fetchDockerLogs() {
   loadingDockerLogs.value = true
   getDockerLogs(dockerLogLines.value)
-    .then(data => {
+    .then((data) => {
       if (data.success && data.logs) {
         dockerLogs.value = data.logs
       } else {
@@ -411,7 +403,7 @@ function fetchDockerLogs() {
         ElMessage.warning(data.error || '无法获取日志')
       }
     })
-    .catch(err => {
+    .catch((err) => {
       console.error('获取Docker日志失败:', err)
       ElMessage.error('获取Docker日志失败')
       dockerLogs.value = ''
@@ -426,9 +418,9 @@ function clearDockerLogs() {
 }
 
 function formatSize(bytes: number): string {
-  if (bytes < 1024) return bytes + ' B'
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
-  return (bytes / (1024 * 1024)).toFixed(2) + ' MB'
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`
 }
 
 function getLineClass(line: string): string {
@@ -456,8 +448,8 @@ async function fetchFileList() {
         currentFileName.value = res.files[0].name
       }
     }
-  } catch (e: any) {
-    console.error('获取日志文件列表失败:', e)
+  } catch (err: any) {
+    console.error('获取日志文件列表失败:', err)
   }
 }
 
@@ -476,8 +468,8 @@ async function fetchAppLogs() {
     } else {
       ElMessage.error(res.error || '获取日志失败')
     }
-  } catch (e: any) {
-    console.error('获取日志内容失败:', e)
+  } catch (err: any) {
+    console.error('获取日志内容失败:', err)
     ElMessage.error('获取日志内容失败')
   } finally {
     loadingAppLogs.value = false
@@ -486,7 +478,7 @@ async function fetchAppLogs() {
 
 function viewFile(name: string) {
   selectedFile.value = name
-  fetchAppLogs()
+  void fetchAppLogs()
 }
 
 function handleDownload() {
@@ -504,27 +496,26 @@ function handleRestart() {
     return
   }
 
-  ElMessageBox.confirm(
+  void ElMessageBox.confirm(
     '确定要重启Docker容器吗？重启后服务会短暂中断。',
     '确认重启',
     {
       confirmButtonText: '确定重启',
       cancelButtonText: '取消',
       type: 'warning',
-      dangerouslyUseHTMLString: false
-    }
+      dangerouslyUseHTMLString: false,
+    },
   ).then(() => {
     restarting.value = true
     restartMessage.value = ''
-    
+
     restartDocker()
-      .then(data => {
+      .then((data) => {
         if (data.success) {
           restartSuccess.value = true
           restartMessage.value = data.message || '容器重启成功'
           ElMessage.success(restartMessage.value)
-          // 延迟刷新状态
-          setTimeout(() => {
+          window.setTimeout(() => {
             fetchDockerStatus()
             fetchDockerLogs()
           }, 2000)
@@ -534,7 +525,7 @@ function handleRestart() {
           ElMessage.error(restartMessage.value)
         }
       })
-      .catch(err => {
+      .catch((err) => {
         restartSuccess.value = false
         restartMessage.value = err.message || '重启操作失败'
         ElMessage.error(restartMessage.value)
@@ -563,13 +554,20 @@ function getStatusType(status?: string): 'success' | 'warning' | 'danger' | 'inf
   return 'info'
 }
 
-watch(() => route.query.tab, syncTabFromRoute, { immediate: true })
-watch(activeTab, (tab) => {
-  updateTabQuery(tab)
-  if (tab === 'app-logs' && logFiles.value.length === 0 && !loadingAppLogs.value) {
-    fetchFileList().then(() => fetchAppLogs())
-  }
-})
+watch(
+  () => props.modelValue,
+  (tab) => {
+    if (tab !== 'docker') {
+      stopLogStream()
+    }
+
+    if (tab === 'app-logs' && logFiles.value.length === 0 && !loadingAppLogs.value) {
+      void fetchFileList().then(() => fetchAppLogs())
+    }
+  },
+  { immediate: true },
+)
+
 watch(appLogLines, () => {
   scrollAppLogsToBottom()
 })
@@ -577,13 +575,9 @@ watch(appLogLines, () => {
 onMounted(() => {
   fetchDockerStatus()
   fetchDockerLogs()
-  if (activeTab.value === 'app-logs') {
-    fetchFileList().then(() => fetchAppLogs())
-  }
 })
 
 onUnmounted(() => {
-  // 组件卸载时关闭WebSocket连接
   stopLogStream()
 })
 </script>

@@ -1924,7 +1924,7 @@ dependencies = [
 
 [[package]]
 name = "mistrelay-desktop"
-version = "0.2.11"
+version = "0.2.12"
 dependencies = [
  "dirs",
  "mime_guess",

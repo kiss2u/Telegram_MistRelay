@@ -3,6 +3,16 @@ import type { RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { shouldUseHashHistory } from '@/utils/runtime'
 
+function getFirstQueryValue(value: unknown): string | undefined {
+  if (typeof value === 'string') {
+    return value
+  }
+  if (Array.isArray(value) && typeof value[0] === 'string') {
+    return value[0]
+  }
+  return undefined
+}
+
 const routes: RouteRecordRaw[] = [
   {
     path: '/login',
@@ -44,12 +54,28 @@ const routes: RouteRecordRaw[] = [
   },
   {
     path: '/system',
-    name: 'System',
-    component: () => import('@/views/system.vue')
+    redirect: (to) => {
+      const tab = getFirstQueryValue(to.query.tab) === 'app-logs' ? 'app-logs' : 'docker'
+      return {
+        path: '/settings',
+        query: {
+          ...to.query,
+          scope: 'management',
+          tab,
+        },
+      }
+    }
   },
   {
     path: '/logs',
-    redirect: '/system?tab=app-logs'
+    redirect: (to) => ({
+      path: '/settings',
+      query: {
+        ...to.query,
+        scope: 'management',
+        tab: 'app-logs',
+      },
+    })
   }
 ]
 

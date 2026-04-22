@@ -40,11 +40,6 @@
         <el-icon><Setting /></el-icon>
         <template #title>系统设置</template>
       </el-menu-item>
-      
-      <el-menu-item index="/system" class="menu-item">
-        <el-icon><Tools /></el-icon>
-        <template #title>系统管理</template>
-      </el-menu-item>
     </el-menu>
     
     <div class="sidebar-footer">
@@ -68,7 +63,6 @@ import {
   Download,
   Folder,
   Setting,
-  Tools,
   Expand,
   Fold
 } from '@element-plus/icons-vue'

@@ -1,9 +1,10 @@
 <template>
   <div class="settings-page">
-      <div class="scope-bar">
+    <div class="scope-bar">
       <el-radio-group v-model="settingsScope" size="large" class="scope-switch">
         <el-radio-button label="client">客户端设置</el-radio-button>
         <el-radio-button label="server">服务端设置</el-radio-button>
+        <el-radio-button label="management">系统管理</el-radio-button>
       </el-radio-group>
     </div>
 
@@ -218,7 +219,7 @@
       </el-tabs>
     </div>
 
-    <div v-else class="scope-panel">
+    <div v-else-if="settingsScope === 'server'" class="scope-panel">
       <div class="server-actions">
         <el-button type="info" @click="handleReloadConfig" :loading="reloading" :disabled="reloading">
           从 config.yml 重新导入
@@ -491,6 +492,10 @@
         </el-tab-pane>
       </el-tabs>
     </div>
+
+    <div v-else class="scope-panel">
+      <SystemManagementPanel v-model="activeManagementTab" />
+    </div>
   </div>
 </template>
 
@@ -498,18 +503,30 @@
 import { ref, onMounted, computed, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getConfig, updateConfig, reloadConfig, getRcloneConfig, saveRcloneConfig, getRcloneRemotes, type RcloneRemote } from '@/api'
+import SystemManagementPanel from '@/components/settings/system-management-panel.vue'
 import { useAuthStore } from '@/stores/auth'
 import { checkServerConnection } from '@/utils/connection'
 import { DEFAULT_DOWNLOAD_CONFIG, getDefaultDesktopDownloadDir, getDesktopClientConfig, isValidDesktopProxyUrl, pickDesktopDownloadDir, restartDesktopApp, saveDesktopClientConfig, checkForUpdate, downloadAndInstallUpdate, type UpdateProgress } from '@/utils/desktop'
 import type { Update } from '@tauri-apps/plugin-updater'
 import { getServerBaseUrl, isValidServerBaseUrl, setServerBaseUrl } from '@/utils/runtime'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
+const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
-const settingsScope = ref<'client' | 'server'>('client')
-const activeClientTab = ref('connection')
-const activeServerTab = ref('telegram')
+const settingsScopes = ['client', 'server', 'management'] as const
+type SettingsScope = typeof settingsScopes[number]
+const clientTabs = ['connection', 'update', 'proxy', 'download'] as const
+type ClientTab = typeof clientTabs[number]
+const serverTabs = ['telegram', 'rclone', 'download', 'aria2', 'stream'] as const
+type ServerTab = typeof serverTabs[number]
+const managementTabs = ['docker', 'app-logs'] as const
+type ManagementTab = typeof managementTabs[number]
+
+const settingsScope = ref<SettingsScope>('client')
+const activeClientTab = ref<ClientTab>('connection')
+const activeServerTab = ref<ServerTab>('telegram')
+const activeManagementTab = ref<ManagementTab>('docker')
 const saving = ref(false)
 const reloading = ref(false)
 const clientServerUrl = ref(getServerBaseUrl())
@@ -583,6 +600,89 @@ const loadedServerCategories = ref<Partial<Record<ConfigCategory, boolean>>>({})
 const rcloneConfigLoaded = ref(false)
 const rcloneRemotesLoaded = ref(false)
 
+function readQueryValue(value: unknown): string | undefined {
+  if (typeof value === 'string') {
+    return value
+  }
+  if (Array.isArray(value) && typeof value[0] === 'string') {
+    return value[0]
+  }
+  return undefined
+}
+
+function isAllowedValue<T extends readonly string[]>(values: T, value: string | undefined): value is T[number] {
+  return typeof value === 'string' && values.includes(value as T[number])
+}
+
+function normalizeScope(value: unknown): SettingsScope {
+  const scope = readQueryValue(value)
+  return isAllowedValue(settingsScopes, scope) ? scope : 'client'
+}
+
+function normalizeClientTab(value: unknown): ClientTab {
+  const tab = readQueryValue(value)
+  return isAllowedValue(clientTabs, tab) ? tab : 'connection'
+}
+
+function normalizeServerTab(value: unknown): ServerTab {
+  const tab = readQueryValue(value)
+  return isAllowedValue(serverTabs, tab) ? tab : 'telegram'
+}
+
+function normalizeManagementTab(value: unknown): ManagementTab {
+  const tab = readQueryValue(value)
+  return isAllowedValue(managementTabs, tab) ? tab : 'docker'
+}
+
+function syncStateFromRoute() {
+  const scope = normalizeScope(route.query.scope)
+  settingsScope.value = scope
+
+  if (scope === 'client') {
+    activeClientTab.value = normalizeClientTab(route.query.tab)
+    return
+  }
+
+  if (scope === 'server') {
+    activeServerTab.value = normalizeServerTab(route.query.tab)
+    return
+  }
+
+  activeManagementTab.value = normalizeManagementTab(route.query.tab)
+}
+
+function getActiveTab(scope: SettingsScope = settingsScope.value): string {
+  if (scope === 'client') {
+    return activeClientTab.value
+  }
+  if (scope === 'server') {
+    return activeServerTab.value
+  }
+  return activeManagementTab.value
+}
+
+async function syncRouteFromState() {
+  const nextScope = settingsScope.value
+  const nextTab = getActiveTab(nextScope)
+  const currentScope = readQueryValue(route.query.scope)
+  const currentTab = readQueryValue(route.query.tab)
+
+  if (route.path === '/settings' && currentScope === nextScope && currentTab === nextTab) {
+    return
+  }
+
+  await router.replace({
+    path: '/settings',
+    query: {
+      ...route.query,
+      scope: nextScope,
+      tab: nextTab,
+    },
+  })
+}
+
+syncStateFromRoute()
+
 const effectiveServerUrlLabel = computed(() => clientServerUrl.value || '同源 /api')
 const connectionStatusLabel = computed(() => {
   if (connectionState.value === 'success') return '已连接'
@@ -606,7 +706,55 @@ const desktopProxyStatusTagType = computed(() => {
   return 'info'
 })
 
-const configs = ref({
+type ConfigState = {
+  telegram: {
+    API_ID: number
+    API_HASH: string
+    BOT_TOKEN: string
+    ADMIN_ID: number
+    FORWARD_ID: string
+    UP_TELEGRAM: boolean
+  }
+  rclone: {
+    UP_ONEDRIVE: boolean
+    RCLONE_REMOTE: string
+    RCLONE_PATH: string
+    UP_GOOGLE_DRIVE: boolean
+    GOOGLE_DRIVE_REMOTE: string
+    GOOGLE_DRIVE_PATH: string
+    AUTO_DELETE_AFTER_UPLOAD: boolean
+  }
+  download: {
+    SAVE_PATH: string
+    PROXY_IP: string
+    PROXY_PORT: string
+    SKIP_SMALL_FILES: boolean
+    MIN_FILE_SIZE_MB: number
+  }
+  aria2: {
+    RPC_SECRET: string
+    RPC_URL: string
+  }
+  stream: {
+    ENABLE_STREAM: boolean
+    BIN_CHANNEL: string
+    STREAM_PORT: number
+    STREAM_BIND_ADDRESS: string
+    STREAM_HASH_LENGTH: number
+    STREAM_HAS_SSL: boolean
+    STREAM_NO_PORT: boolean
+    STREAM_FQDN: string
+    STREAM_KEEP_ALIVE: boolean
+    STREAM_PING_INTERVAL: number
+    STREAM_USE_SESSION_FILE: boolean
+    STREAM_ALLOWED_USERS: string
+    STREAM_AUTO_DOWNLOAD: boolean
+    SEND_STREAM_LINK: boolean
+    MULTI_BOT_TOKENS: string[]
+  }
+}
+
+const configs = ref<ConfigState>({
   telegram: {
     API_ID: 0,
     API_HASH: '',
@@ -653,6 +801,13 @@ const configs = ref({
     MULTI_BOT_TOKENS: [] as string[]
   }
 })
+
+function mergeConfigCategory<K extends ConfigCategory>(category: K, data: unknown) {
+  configs.value[category] = {
+    ...configs.value[category],
+    ...(data as Partial<ConfigState[K]>),
+  } as ConfigState[K]
+}
 
 const multiBotTokensText = computed({
   get: () => {
@@ -1012,10 +1167,7 @@ async function loadServerConfigCategory(category: ConfigCategory, force = false)
   try {
     const response = await getConfig(category)
     if (response.success && response.data) {
-      configs.value[category] = {
-        ...configs.value[category],
-        ...response.data
-      }
+      mergeConfigCategory(category, response.data)
       loadedServerCategories.value = {
         ...loadedServerCategories.value,
         [category]: true,
@@ -1214,32 +1366,51 @@ async function ensureServerTabLoaded(tab: string) {
   await Promise.all(tasks)
 }
 
-onMounted(() => {
-  void testConnection(false)
-  if (settingsScope.value === 'client') {
-    void ensureClientTabLoaded(activeClientTab.value)
-  } else {
-    void ensureServerTabLoaded(activeServerTab.value)
+async function ensureCurrentScopeLoaded(scope: SettingsScope = settingsScope.value) {
+  if (scope === 'client') {
+    await ensureClientTabLoaded(activeClientTab.value)
+    return
   }
+
+  if (scope === 'server') {
+    await ensureServerTabLoaded(activeServerTab.value)
+  }
+}
+
+onMounted(() => {
+  syncStateFromRoute()
+  void testConnection(false)
+  void ensureCurrentScopeLoaded()
+  void syncRouteFromState()
+})
+
+watch(() => [route.query.scope, route.query.tab], () => {
+  syncStateFromRoute()
+  void syncRouteFromState()
 })
 
 watch(settingsScope, (scope) => {
-  if (scope === 'client') {
-    void ensureClientTabLoaded(activeClientTab.value)
-  } else {
-    void ensureServerTabLoaded(activeServerTab.value)
-  }
+  void ensureCurrentScopeLoaded(scope)
+  void syncRouteFromState()
 })
 
 watch(activeClientTab, (tab) => {
   if (settingsScope.value === 'client') {
     void ensureClientTabLoaded(tab)
+    void syncRouteFromState()
   }
 })
 
 watch(activeServerTab, (tab) => {
   if (settingsScope.value === 'server') {
     void ensureServerTabLoaded(tab)
+    void syncRouteFromState()
+  }
+})
+
+watch(activeManagementTab, () => {
+  if (settingsScope.value === 'management') {
+    void syncRouteFromState()
   }
 })
 </script>
