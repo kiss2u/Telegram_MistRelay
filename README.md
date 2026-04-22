@@ -200,7 +200,8 @@ export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
 
 GitHub Actions 中的 `TAURI_SIGNING_PRIVATE_KEY` 必须填写 `MistRelay.key` 私钥文件内容本身。
 如果使用仓库当前这套新生成的 key，`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 应留空。
-不要填写：
+`desktop/tauri.conf.json` 里的 updater `pubkey` 必须填写 `MistRelay.key.pub` 文件中的 base64 内容本身，不要手动解码成两行 minisign 文本。
+不要把下面这些值填到 `TAURI_SIGNING_PRIVATE_KEY` Secret 里：
 - `tauri.conf.json` 里的 updater `pubkey`
 - 私钥文件路径
 - 带空格拆开的 base64 字符串

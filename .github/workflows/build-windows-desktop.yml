@@ -69,19 +69,28 @@ jobs:
             process.exit(1)
           }
 
-          const lines = pubkey.trim().split(/\r?\n/).filter(Boolean)
-          if (/^[A-Za-z0-9+/=]+$/.test(pubkey.trim()) && lines.length === 1) {
-            console.error('ERROR: updater pubkey looks base64-encoded. Use raw minisign public key text instead.')
+          const normalized = pubkey.trim()
+          if (!/^[A-Za-z0-9+/=]+$/.test(normalized)) {
+            console.error('ERROR: updater pubkey must be the base64 content of the generated .pub key file.')
             process.exit(1)
           }
 
+          let decoded
+          try {
+            decoded = Buffer.from(normalized, 'base64').toString('utf8')
+          } catch (error) {
+            console.error(`ERROR: updater pubkey failed to decode from base64: ${error.message}`)
+            process.exit(1)
+          }
+
+          const lines = decoded.trim().split(/\r?\n/).filter(Boolean)
           if (lines.length !== 2 || !lines[0].startsWith('untrusted comment: minisign public key:')) {
-            console.error('ERROR: updater pubkey must be the raw two-line minisign public key content.')
+            console.error('ERROR: updater pubkey must decode to the two-line minisign public key content.')
             process.exit(1)
           }
 
           if (!/^[A-Za-z0-9+/=]+$/.test(lines[1])) {
-            console.error('ERROR: updater pubkey second line is not a valid minisign key payload.')
+            console.error('ERROR: updater pubkey payload is not a valid minisign key line.')
             process.exit(1)
           }
           SCRIPT
