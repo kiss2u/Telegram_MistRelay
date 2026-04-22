@@ -168,9 +168,58 @@ jobs:
           fs.writeFileSync(tauriConfigPath, `${JSON.stringify(tauriConfig, null, 2)}\n`)
           SCRIPT
 
+      - name: Validate desktop default binary
+        working-directory: desktop
+        run: |
+          node <<'SCRIPT'
+          const { execFileSync } = require('child_process')
+
+          const metadata = JSON.parse(
+            execFileSync('cargo', ['metadata', '--no-deps', '--format-version', '1'], {
+              encoding: 'utf8',
+            }),
+          )
+          const pkg = metadata.packages.find((item) => item.name === 'mistrelay-desktop')
+          if (!pkg) {
+            console.error('ERROR: cargo metadata did not include mistrelay-desktop')
+            process.exit(1)
+          }
+          if (pkg.default_run !== 'mistrelay-desktop') {
+            console.error(`ERROR: desktop/Cargo.toml must set default-run to mistrelay-desktop, got ${pkg.default_run ?? 'null'}`)
+            process.exit(1)
+          }
+          const binTargets = pkg.targets.filter((target) => target.kind.includes('bin')).map((target) => target.name)
+          if (!binTargets.includes('mistrelay-desktop')) {
+            console.error(`ERROR: cargo metadata is missing mistrelay-desktop bin target. Found: ${binTargets.join(', ')}`)
+            process.exit(1)
+          }
+          console.log(`Validated default-run=${pkg.default_run} with bin targets: ${binTargets.join(', ')}`)
+          SCRIPT
+
       - name: Build Windows desktop client
         working-directory: desktop
         run: npm run build -- --bundles nsis
+
+      - name: Validate NSIS installer payload size
+        shell: bash
+        run: |
+          NSIS_DIR="desktop/target/release/bundle/nsis"
+          SETUP_EXE=$(ls "${NSIS_DIR}"/*-setup.exe 2>/dev/null | head -1)
+
+          if [[ -z "${SETUP_EXE}" ]]; then
+            echo "ERROR: could not find NSIS setup exe"
+            ls -la "${NSIS_DIR}"/
+            exit 1
+          fi
+
+          SETUP_SIZE=$(wc -c < "${SETUP_EXE}")
+          echo "Installer: ${SETUP_EXE}"
+          echo "Installer size: ${SETUP_SIZE} bytes"
+
+          if [[ "${SETUP_SIZE}" -lt 1000000 ]]; then
+            echo "ERROR: NSIS installer is unexpectedly small (${SETUP_SIZE} bytes). This usually means the wrong binary target was packaged."
+            exit 1
+          fi
 
       - name: Generate latest.json for updater
         shell: bash

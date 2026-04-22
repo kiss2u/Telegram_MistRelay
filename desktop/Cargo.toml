@@ -1,9 +1,10 @@
 [package]
 name = "mistrelay-desktop"
-version = "0.2.13"
+version = "0.2.14"
 description = "MistRelay desktop shell"
 authors = ["Codex"]
 edition = "2021"
+default-run = "mistrelay-desktop"
 
 [profile.release]
 lto = "thin"
