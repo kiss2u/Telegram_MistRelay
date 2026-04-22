@@ -193,6 +193,15 @@ npm run build
 
 当前 Windows NSIS 安装器默认使用简体中文界面。
 
+桌面端本地预发布检查：
+
+```bash
+cd desktop
+npm run check:release
+```
+
+Linux/macOS 开发机默认只做本地预发布校验；正式 Windows 安装包、签名文件和 `latest.json` 仍以 GitHub Actions 的 `windows-latest` 构建结果为准。
+
 构建时需设置签名环境变量：
 
 ```bash
@@ -245,6 +254,13 @@ Dockerfile 使用多阶段构建：
 2. `python` 阶段通过 aiohttp 提供 API 服务，并将 `/` 路由指向前端 `index.html`。
 
 ## 📝 更新日志
+
+### [0.2.15] - 2026-04-22 (桌面预发布校验入口)
+- **🧪 本地预发布检查标准化**:
+  - 桌面端新增 `npm run check:release`，统一执行前端生产构建和 `cargo check`，用于发版前本地校验。
+  - 文档明确 Linux/macOS 机器只承担本地预发布检查，正式 Windows 安装包继续以 GitHub Actions 结果为准。
+- **🧹 构建产物忽略补全**:
+  - 补充 `desktop-qt` 本地虚拟环境与构建目录忽略规则，避免后续实验性 Qt 客户端污染工作树。
 
 ### [0.2.14] - 2026-04-22 (桌面安装包打包修复)
 - **📦 安装包主程序修正**:

@@ -113,3 +113,11 @@ cd desktop
 npm install
 npm run dev
 ```
+
+桌面端本地预发布检查：
+```bash
+cd desktop
+npm run check:release
+```
+
+说明：Linux/macOS 本地环境默认只执行预发布校验；正式 Windows 安装包和 `latest.json` 仍由 `.github/workflows/build-windows-desktop.yml` 在 `windows-latest` Runner 上产出。

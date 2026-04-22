@@ -1,13 +1,14 @@
 {
   "name": "mistrelay-desktop",
   "private": true,
-  "version": "0.2.14",
+  "version": "0.2.15",
   "type": "module",
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build",
     "frontend:dev": "vite --config frontend/vite.config.ts",
-    "frontend:build": "vite build --config frontend/vite.config.ts"
+    "frontend:build": "vite build --config frontend/vite.config.ts",
+    "check:release": "npm run frontend:build && cargo check"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",

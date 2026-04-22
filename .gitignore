@@ -147,3 +147,7 @@ docker-compose.override.yml
 Thumbs.db
 .DS_Store
 cache/
+desktop-qt/.venv/
+desktop-qt/build/
+desktop-qt/dist/
+desktop-qt/__pycache__/
