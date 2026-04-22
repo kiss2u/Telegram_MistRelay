@@ -170,6 +170,7 @@ jobs:
 
       - name: Validate desktop default binary
         working-directory: desktop
+        shell: bash
         run: |
           node <<'SCRIPT'
           const { execFileSync } = require('child_process')
