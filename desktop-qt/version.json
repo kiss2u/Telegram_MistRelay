@@ -1,0 +1,9 @@
+{
+  "version": "0.2.15-beta.1",
+  "channel": "beta",
+  "product_name": "MistRelay Desktop Qt",
+  "release_tag_prefix": "desktop-qt-v",
+  "manifest_url": "",
+  "release_feed_url": "https://api.github.com/repos/qianlong520/Telegram_MistRelay/releases?per_page=100",
+  "verify_key": ""
+}

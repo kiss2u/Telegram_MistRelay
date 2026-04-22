@@ -1,0 +1,175 @@
+name: Build Windows Desktop Qt
+
+on:
+  push:
+    tags:
+      - 'desktop-qt-v*'
+
+jobs:
+  build-windows-qt:
+    name: Build Windows Qt Client
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare release metadata
+        id: meta
+        shell: bash
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          VERSION="${TAG_NAME#desktop-qt-v}"
+          if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid version in tag: ${TAG_NAME}"
+            exit 1
+          fi
+
+          if [[ "${VERSION}" == *-* ]]; then
+            PRERELEASE="true"
+          else
+            PRERELEASE="false"
+          fi
+
+          {
+            echo "tag_name=${TAG_NAME}"
+            echo "version=${VERSION}"
+            echo "prerelease=${PRERELEASE}"
+            echo "artifact_name=mistrelay-desktop-qt-windows-v${VERSION}"
+            echo "release_name=MistRelay Desktop Qt Beta v${VERSION}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Sync Qt version and updater public key
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.meta.outputs.version }}
+          QT_UPDATE_VERIFY_KEY: ${{ secrets.QT_UPDATE_VERIFY_KEY }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          version_path = Path('desktop-qt/version.json')
+          payload = json.loads(version_path.read_text(encoding='utf-8'))
+          payload['version'] = os.environ['RELEASE_VERSION']
+          payload['verify_key'] = (os.environ.get('QT_UPDATE_VERIFY_KEY') or '').strip()
+          if not payload['verify_key']:
+              raise SystemExit('missing QT_UPDATE_VERIFY_KEY secret')
+          version_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+          PY
+
+      - name: Install desktop-qt dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r desktop-qt/requirements.txt
+
+      - name: Local release checks
+        shell: bash
+        run: |
+          python desktop-qt/scripts/check_release.py --require-update-key
+
+      - name: Build Windows desktop-qt client
+        shell: bash
+        run: |
+          python desktop-qt/scripts/build_windows.py --clean
+
+      - name: Locate installer
+        id: installer
+        shell: bash
+        run: |
+          INSTALLER=$(ls desktop-qt/dist/windows/*-setup.exe 2>/dev/null | head -1)
+          if [[ -z "${INSTALLER}" ]]; then
+            echo "ERROR: installer not found"
+            find desktop-qt/dist -maxdepth 3 -type f | sort
+            exit 1
+          fi
+
+          SIZE=$(wc -c < "${INSTALLER}")
+          if [[ "${SIZE}" -lt 1000000 ]]; then
+            echo "ERROR: installer is unexpectedly small (${SIZE} bytes)"
+            exit 1
+          fi
+
+          echo "installer=${INSTALLER}" >> "${GITHUB_OUTPUT}"
+          echo "installer_name=$(basename "${INSTALLER}")" >> "${GITHUB_OUTPUT}"
+
+      - name: Generate qt-latest manifest
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.meta.outputs.version }}
+          TAG_NAME: ${{ steps.meta.outputs.tag_name }}
+          REPO: ${{ github.repository }}
+          QT_UPDATE_PRIVATE_KEY: ${{ secrets.QT_UPDATE_PRIVATE_KEY }}
+          INSTALLER: ${{ steps.installer.outputs.installer }}
+          INSTALLER_NAME: ${{ steps.installer.outputs.installer_name }}
+        run: |
+          if [[ -z "${QT_UPDATE_PRIVATE_KEY}" ]]; then
+            echo "ERROR: missing QT_UPDATE_PRIVATE_KEY secret"
+            exit 1
+          fi
+
+          DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${TAG_NAME}/${INSTALLER_NAME}"
+          RELEASE_URL="https://github.com/${REPO}/releases/tag/${TAG_NAME}"
+          NOTES=$(printf 'MistRelay Desktop Qt Beta v%s\n如果自动更新不可用，请手动下载安装包：%s\nRelease 页面：%s' "${RELEASE_VERSION}" "${DOWNLOAD_URL}" "${RELEASE_URL}")
+
+          python desktop-qt/scripts/release_manifest.py generate \
+            --version "${RELEASE_VERSION}" \
+            --installer "${INSTALLER}" \
+            --download-url "${DOWNLOAD_URL}" \
+            --output qt-latest.json \
+            --signature-output qt-latest.json.sig \
+            --notes "${NOTES}" \
+            --private-key "${QT_UPDATE_PRIVATE_KEY}"
+
+      - name: Verify qt-latest manifest
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.meta.outputs.version }}
+          TAG_NAME: ${{ steps.meta.outputs.tag_name }}
+          REPO: ${{ github.repository }}
+          QT_UPDATE_VERIFY_KEY: ${{ secrets.QT_UPDATE_VERIFY_KEY }}
+          INSTALLER: ${{ steps.installer.outputs.installer }}
+          INSTALLER_NAME: ${{ steps.installer.outputs.installer_name }}
+        run: |
+          DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${TAG_NAME}/${INSTALLER_NAME}"
+          python desktop-qt/scripts/release_manifest.py verify \
+            --manifest qt-latest.json \
+            --signature qt-latest.json.sig \
+            --installer "${INSTALLER}" \
+            --public-key "${QT_UPDATE_VERIFY_KEY}" \
+            --version "${RELEASE_VERSION}" \
+            --download-url "${DOWNLOAD_URL}"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.meta.outputs.artifact_name }}
+          path: |
+            ${{ steps.installer.outputs.installer }}
+            qt-latest.json
+            qt-latest.json.sig
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag_name }}
+          name: ${{ steps.meta.outputs.release_name }}
+          target_commitish: ${{ github.sha }}
+          prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
+          generate_release_notes: true
+          make_latest: false
+          files: |
+            ${{ steps.installer.outputs.installer }}
+            qt-latest.json
+            qt-latest.json.sig

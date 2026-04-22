@@ -200,6 +200,18 @@ cd desktop
 npm run check:release
 ```
 
+实验性 Qt 客户端位于 `desktop-qt/`，作为独立 Windows Beta 通道发布：
+
+```bash
+cd desktop-qt
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+python scripts/check_release.py
+```
+
+Qt 客户端发布 tag 使用 `desktop-qt-v<semver>`，客户端会通过 GitHub Releases API 解析该通道下的 `qt-latest.json` 资产，不影响现有 Tauri 客户端的自动更新链路。
+
 Linux/macOS 开发机默认只做本地预发布校验；正式 Windows 安装包、签名文件和 `latest.json` 仍以 GitHub Actions 的 `windows-latest` 构建结果为准。
 
 构建时需设置签名环境变量：
